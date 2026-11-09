@@ -1,0 +1,13 @@
+{
+  "name": "Saving Planner",
+  "short_name": "SavingPlanner",
+  "description": "Track monthly income, expenses and savings goals.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f1fa",
+  "theme_color": "#3b1f8f",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
