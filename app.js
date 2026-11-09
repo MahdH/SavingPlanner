@@ -28,7 +28,10 @@ function load() {
   return defaultState();
 }
 let S = load();
-const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } };
+const save = () => {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* ignore */ }
+  if (typeof schedulePush === 'function') schedulePush();
+};
 
 /* ---------- helpers ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -102,6 +105,188 @@ async function maybeNotify() {
   } catch (e) { /* ignore */ }
 }
 
+
+/* ---------- shared database (Supabase) ---------- */
+const SB_KEY = 'savingplanner.sb', CLOUD_KEY = 'savingplanner.cloud', LOCAL_ONLY_KEY = 'savingplanner.localonly';
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+function sbConfig() {
+  try { const l = JSON.parse(lsGet(SB_KEY)); if (l && l.url && l.anonKey) return l; } catch (e) { /* ignore */ }
+  const c = window.SP_CONFIG || {};
+  return c.url && c.anonKey ? c : null;
+}
+let sb = null, channel = null, pushTimer = null, pushing = false;
+const cloud = { on: false, hid: null, name: '', code: '', email: '', status: '' };
+const synced = { config: '', months: {} };
+let screen = 'app', authMode = 'signin', msg = '';
+
+function isPristine(m) {
+  return !Object.values(m.income || {}).some(l => l.length) && !(m.done && Object.values(m.done).some(Boolean)) &&
+    Object.values(m.expenses || {}).every(l => l.every(e => e.note === 'Recurring'));
+}
+const configOf = () => ({ sources: S.sources, categories: S.categories, goals: S.goals, currency: S.settings.currency, midDay: S.settings.midDay });
+function applyConfig(c) {
+  if (!c || typeof c !== 'object') return;
+  if (c.sources) S.sources = c.sources;
+  if (c.categories) S.categories = c.categories;
+  if (c.goals) S.goals = c.goals;
+  if (c.currency) S.settings.currency = c.currency;
+  if (c.midDay) S.settings.midDay = c.midDay;
+}
+function setStatus(t) { cloud.status = t; const el = document.getElementById('syncstatus'); if (el) el.textContent = t; }
+function softRender() {
+  const a = document.activeElement;
+  if (a && a.closest && a.closest('#app') && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) { setTimeout(softRender, 1500); return; }
+  render();
+}
+function saveLocal() { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
+
+function schedulePush() {
+  if (!cloud.on) return;
+  setStatus('Saving…');
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushNow, 600);
+}
+async function pushNow() {
+  if (!cloud.on || pushing) { if (pushing) schedulePush(); return; }
+  pushing = true;
+  try {
+    const cfg = JSON.stringify(configOf());
+    if (cfg !== synced.config) {
+      const { error } = await sb.from('households').update({ config: configOf() }).eq('id', cloud.hid);
+      if (error) throw error;
+      synced.config = cfg;
+    }
+    const rows = [];
+    for (const [k, m] of Object.entries(S.months)) {
+      const j = JSON.stringify(m);
+      if (j === synced.months[k]) continue;
+      if (synced.months[k] === undefined && isPristine(m)) continue;
+      rows.push({ household_id: cloud.hid, month: k, data: m, updated_at: new Date().toISOString() });
+    }
+    if (rows.length) {
+      const { error } = await sb.from('months').upsert(rows, { onConflict: 'household_id,month' });
+      if (error) throw error;
+      rows.forEach(r => { synced.months[r.month] = JSON.stringify(r.data); });
+    }
+    setStatus('Synced ✓');
+  } catch (e) {
+    setStatus('Offline — will retry');
+    clearTimeout(pushTimer); pushTimer = setTimeout(pushNow, 10000);
+  } finally { pushing = false; }
+}
+async function pull() {
+  const [h, m] = await Promise.all([
+    sb.from('households').select('name,invite_code,config').eq('id', cloud.hid).single(),
+    sb.from('months').select('month,data').eq('household_id', cloud.hid),
+  ]);
+  if (h.error) throw h.error; if (m.error) throw m.error;
+  cloud.name = h.data.name; cloud.code = h.data.invite_code;
+  if (h.data.config && Object.keys(h.data.config).length) applyConfig(h.data.config);
+  synced.config = JSON.stringify(h.data.config && Object.keys(h.data.config).length ? configOf() : {});
+  // keep local months that have not been uploaded yet; otherwise the cloud copy wins
+  const next = {};
+  m.data.forEach(r => { next[r.month] = r.data; synced.months[r.month] = JSON.stringify(r.data); });
+  for (const [k, v] of Object.entries(S.months)) if (!(k in next) && synced.months[k] === undefined) next[k] = v;
+  S.months = next;
+  saveLocal();
+  lsSet(CLOUD_KEY, JSON.stringify({ hid: cloud.hid, name: cloud.name, code: cloud.code, email: cloud.email }));
+}
+function subscribe() {
+  if (channel) sb.removeChannel(channel);
+  channel = sb.channel('hh-' + cloud.hid)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'months', filter: `household_id=eq.${cloud.hid}` }, p => {
+      if (p.eventType === 'DELETE') { delete S.months[p.old.month]; delete synced.months[p.old.month]; }
+      else {
+        const j = JSON.stringify(p.new.data);
+        if (j === synced.months[p.new.month]) return;
+        S.months[p.new.month] = p.new.data; synced.months[p.new.month] = j;
+      }
+      saveLocal(); softRender();
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'households', filter: `id=eq.${cloud.hid}` }, p => {
+      const j = JSON.stringify(p.new.config || {});
+      if (j === synced.config) return;
+      applyConfig(p.new.config); synced.config = JSON.stringify(configOf()); saveLocal(); softRender();
+    })
+    .subscribe();
+}
+async function enterApp(offline) {
+  cloud.on = true;
+  if (!offline) {
+    try { setStatus('Syncing…'); await pull(); await pushNow(); subscribe(); setStatus('Synced ✓'); }
+    catch (e) { setStatus('Offline — showing saved data'); }
+  } else setStatus('Offline — showing saved data');
+  screen = 'app'; render();
+}
+async function routeAfterAuth(session) {
+  cloud.email = session.user.email;
+  const { data, error } = await sb.from('members').select('household_id').eq('user_id', session.user.id).maybeSingle();
+  if (error) { msg = error.message; screen = 'auth'; return render(); }
+  if (!data) { screen = 'household'; return render(); }
+  cloud.hid = data.household_id;
+  await enterApp(false);
+}
+async function initCloud() {
+  const cfg = sbConfig();
+  if (!cfg) { screen = lsGet(LOCAL_ONLY_KEY) ? 'app' : 'setup'; return render(); }
+  if (!window.supabase) { msg = 'Could not load the database library.'; screen = 'setup'; return render(); }
+  sb = window.supabase.createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true } });
+  sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT' && cloud.on) { stopCloud(); screen = 'auth'; render(); } });
+  let session = null;
+  try { session = (await sb.auth.getSession()).data.session; } catch (e) { /* offline */ }
+  const cached = (() => { try { return JSON.parse(lsGet(CLOUD_KEY)); } catch (e) { return null; } })();
+  if (!session && cached && !navigator.onLine) { Object.assign(cloud, cached); return enterApp(true); }
+  if (!session) { screen = 'auth'; return render(); }
+  if (cached && !navigator.onLine) { Object.assign(cloud, cached); return enterApp(true); }
+  await routeAfterAuth(session);
+}
+function stopCloud() {
+  cloud.on = false; clearTimeout(pushTimer);
+  if (channel && sb) sb.removeChannel(channel); channel = null;
+  synced.config = ''; synced.months = {};
+}
+async function signOut() {
+  if (cloud.on) await pushNow();
+  try { await sb.auth.signOut(); } catch (e) { /* ignore */ }
+  stopCloud(); lsSet(CLOUD_KEY, null);
+  S = defaultState(); saveLocal(); // do not leave household data on a device after sign-out
+  cloud.hid = null; authMode = 'signin'; msg = ''; screen = 'auth'; render();
+}
+
+function cardScreen(title, body) {
+  return `<div class="monthbar"><h1>Saving Planner</h1></div><h2>${title}</h2><div class="list" style="padding:14px">${body}</div>${msg ? `<div class="warn">${esc(msg)}</div>` : ''}`;
+}
+function viewSetup() {
+  return cardScreen('Connect your shared database', `<p class="note">Create a free Supabase project, run <code>supabase/schema.sql</code>, then paste the Project URL and anon key (Project Settings → API).</p>
+    <form data-act="setup"><div class="field"><input type="text" placeholder="https://xxxx.supabase.co" required></div>
+    <div class="field"><input type="text" placeholder="anon public key" required></div>
+    <div class="btnrow"><button class="btn">Connect</button><button type="button" class="btn sec" data-act="localonly">Use on this device only</button></div></form>`);
+}
+function viewAuth() {
+  const up = authMode === 'signup';
+  return cardScreen(up ? 'Create your account' : 'Sign in', `<form data-act="auth">
+    <div class="field"><input type="email" placeholder="Email" autocomplete="email" required></div>
+    <div class="field"><input type="password" placeholder="Password (min 6 characters)" minlength="6" autocomplete="${up ? 'new-password' : 'current-password'}" required></div>
+    <div class="btnrow"><button class="btn">${up ? 'Sign up' : 'Sign in'}</button>
+    <button type="button" class="btn sec" data-act="authmode">${up ? 'I have an account' : 'Create account'}</button></div></form>`);
+}
+function viewHousehold() {
+  return cardScreen('Set up your household', `<p class="note">Signed in as ${esc(cloud.email)}. One of you creates the household; the other joins with its invite code.</p>
+    <form data-act="hh-create"><div class="field"><input type="text" placeholder="Household name (e.g. Mahdi & Maedeh)"><button class="btn">Create</button></div></form>
+    <p class="note">Existing data on this device will be uploaded to the new household.</p>
+    <form data-act="hh-join"><div class="field"><input type="text" placeholder="Invite code" required><button class="btn">Join</button></div></form>
+    <div class="btnrow"><button class="btn sec" data-act="signout">Sign out</button></div>`);
+}
+function accountSection() {
+  if (!sbConfig()) return `<h2>Shared database</h2><div class="btnrow"><button class="btn" data-act="gosetup">Set up shared database</button></div>`;
+  if (!cloud.on) return '';
+  return `<h2>Shared household</h2><div class="card"><div class="l">Signed in as ${esc(cloud.email)} · ${esc(cloud.name)}</div>
+    <div class="l">Invite code for your partner: <b style="font-size:1.1rem">${esc(cloud.code)}</b></div>
+    <div class="l" id="syncstatus">${esc(cloud.status)}</div></div>
+    <div class="btnrow"><button class="btn sec" data-act="signout">Sign out</button></div>`;
+}
+
 /* ---------- views ---------- */
 function entryRows(kind, name, list) {
   const key = `${kind}:${name}`;
@@ -167,7 +352,7 @@ function viewSavings() {
   <p class="note">Changes apply to ${monthName(cur)} and to new months. Past months keep their own plan.</p>`;
 }
 function viewHistory() {
-  const keys = Object.keys(S.months).sort().reverse();
+  const keys = Object.keys(S.months).filter(k => !isPristine(S.months[k])).sort().reverse();
   let totalSaved = 0, totalBal = 0;
   const rows = keys.map(k => { const c = calc(k); totalSaved += c.saved; totalBal += c.balance;
     return `<tr class="clickable" data-act="goto" data-key="${k}"><td>${monthName(k)}</td><td>${money(c.income)}</td><td>${money(c.expenses)}</td>
@@ -188,6 +373,7 @@ function viewSettings() {
     <button class="btn sec" data-act="src-del" data-i="${i}">✕</button></div>`).join('');
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   return `<div class="monthbar"><h1>Settings</h1></div>
+  ${accountSection()}
   <h2>Reminders</h2>
   <div class="field"><label><input type="checkbox" data-act="notify" ${S.settings.notify ? 'checked' : ''}> Remind me mid-month and at month end</label></div>
   <div class="field">Mid-month reminder on day <input type="number" min="1" max="28" style="width:70px" value="${S.settings.midDay}" data-act="midday"></div>
@@ -205,11 +391,13 @@ function viewSettings() {
     <label class="btn sec">Restore backup<input type="file" accept=".json" data-act="restore" hidden></label></div>
   <p class="note">Import past months from your sheet — paste CSV lines in the form <code>month,type,category,amount</code>, e.g. <code>2024-11,expense,Grocery,420.50</code> or <code>2024-11,income,Mahdi,3000</code>.</p>
   <textarea id="csv" placeholder="2024-11,income,Mahdi,3000&#10;2024-11,expense,Rent,1600"></textarea>
-  <div class="btnrow"><button class="btn" data-act="csv">Import CSV</button><button class="btn danger" data-act="wipe">Erase all data</button></div>`;
+  <div class="btnrow"><button class="btn" data-act="csv">Import CSV</button>${cloud.on ? '' : '<button class="btn danger" data-act="wipe">Erase all data</button>'}</div>`;
 }
 const views = { month: viewMonth, savings: viewSavings, history: viewHistory, settings: viewSettings };
+const screens = { setup: viewSetup, auth: viewAuth, household: viewHousehold, loading: () => '' };
 function render() {
-  $app.innerHTML = views[tab]();
+  $app.innerHTML = screen === 'app' ? views[tab]() : screens[screen]();
+  document.getElementById('tabs').hidden = screen !== 'app';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
 }
 
@@ -258,6 +446,10 @@ document.addEventListener('click', e => {
     case 'goal-del': { m.plan = m.plan.filter(g => g.id !== t.dataset.id); S.goals = S.goals.filter(g => g.id !== t.dataset.id); save(); break; }
     case 'cat-del': S.categories.splice(+t.dataset.i, 1); save(); break;
     case 'src-del': S.sources.splice(+t.dataset.i, 1); save(); break;
+    case 'signout': signOut(); return;
+    case 'authmode': authMode = authMode === 'signup' ? 'signin' : 'signup'; msg = ''; break;
+    case 'localonly': lsSet(LOCAL_ONLY_KEY, '1'); screen = 'app'; msg = ''; break;
+    case 'gosetup': lsSet(LOCAL_ONLY_KEY, null); screen = 'setup'; msg = ''; break;
     case 'perm':
       if ('Notification' in window) Notification.requestPermission().then(() => { render(); maybeNotify(); });
       else alert('Notifications are not supported in this browser. Use the calendar file instead.');
@@ -270,11 +462,44 @@ document.addEventListener('click', e => {
   }
   render();
 });
+async function doAuth(email, password) {
+  msg = 'Working…'; render();
+  try {
+    if (authMode === 'signup') {
+      const { data, error } = await sb.auth.signUp({ email, password });
+      if (error) throw error;
+      if (!data.session) { authMode = 'signin'; msg = 'Account created. Check your email to confirm it, then sign in.'; return render(); }
+      authMode = 'signin'; msg = ''; return routeAfterAuth(data.session);
+    }
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    msg = ''; await routeAfterAuth(data.session);
+  } catch (e) { msg = e.message || 'Something went wrong.'; render(); }
+}
+async function doCreateHousehold(name) {
+  try {
+    const { data, error } = await sb.rpc('create_household', { p_name: name, p_config: configOf() });
+    if (error) throw error;
+    cloud.hid = data; msg = ''; await enterApp(false);
+  } catch (e) { msg = e.message; render(); }
+}
+async function doJoinHousehold(code) {
+  try {
+    const { data, error } = await sb.rpc('join_household', { p_code: code });
+    if (error) throw error;
+    S.months = {}; // the household's data replaces whatever is on this device
+    cloud.hid = data; msg = ''; await enterApp(false);
+  } catch (e) { msg = e.message; render(); }
+}
 document.addEventListener('submit', e => {
   const f = e.target.closest('form[data-act]'); if (!f) return;
   e.preventDefault();
   const [i1, i2] = f.querySelectorAll('input'), v1 = i1.value, v2 = i2 ? i2.value : '';
   switch (f.dataset.act) {
+    case 'setup': lsSet(SB_KEY, JSON.stringify({ url: v1.trim().replace(/\/+$/, ''), anonKey: v2.trim() })); msg = ''; initCloud(); return;
+    case 'auth': doAuth(v1.trim(), v2); return;
+    case 'hh-create': doCreateHousehold(v1.trim()); return;
+    case 'hh-join': doJoinHousehold(v1); return;
     case 'add': {
       const d = ensureMonth(cur)[f.dataset.kind === 'i' ? 'income' : 'expenses'];
       (d[f.dataset.name] = d[f.dataset.name] || []).push({ id: uid(), amt: parseFloat(v1), note: v2.trim() }); break;
@@ -311,6 +536,12 @@ document.addEventListener('change', e => {
 
 /* ---------- boot ---------- */
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { render(); maybeNotify(); } });
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden) return;
+  if (cloud.on) { try { await pushNow(); await pull(); setStatus('Synced ✓'); } catch (e) { setStatus('Offline — showing saved data'); } }
+  softRender(); maybeNotify();
+});
+window.addEventListener('online', () => { if (cloud.on) { pushNow(); pull().then(() => { subscribe(); softRender(); }).catch(() => {}); } });
+screen = 'loading';
 render();
-maybeNotify();
+initCloud().then(maybeNotify);

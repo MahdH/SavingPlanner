@@ -7,7 +7,11 @@
   <meta name="theme-color" content="#3b1f8f">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Saving Planner">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -18,6 +22,8 @@
     <button data-tab="history">History</button>
     <button data-tab="settings">Settings</button>
   </nav>
+  <script src="config.js"></script>
+  <script src="vendor/supabase.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
