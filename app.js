@@ -111,9 +111,9 @@ const SB_KEY = 'savingplanner.sb', CLOUD_KEY = 'savingplanner.cloud', LOCAL_ONLY
 const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 function sbConfig() {
-  try { const l = JSON.parse(lsGet(SB_KEY)); if (l && l.url && l.anonKey) return l; } catch (e) { /* ignore */ }
-  const c = window.SP_CONFIG || {};
-  return c.url && c.anonKey ? c : null;
+  const clean = c => c && c.url && c.anonKey ? { url: c.url.trim().replace(/\/(rest|auth)\/v1.*$/, '').replace(/\/+$/, ''), anonKey: c.anonKey.trim() } : null;
+  try { const l = clean(JSON.parse(lsGet(SB_KEY))); if (l) return l; } catch (e) { /* ignore */ }
+  return clean(window.SP_CONFIG);
 }
 let sb = null, channel = null, pushTimer = null, pushing = false;
 const cloud = { on: false, hid: null, name: '', code: '', email: '', status: '' };
