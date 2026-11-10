@@ -254,145 +254,163 @@ async function signOut() {
   cloud.hid = null; authMode = 'signin'; msg = ''; screen = 'auth'; render();
 }
 
+/* ---------- design helpers (Lucide icons, one stroke weight, one size family) ---------- */
+const IC = {
+  calendar: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+  'chevron-left': '<path d="m15 18-6-6 6-6"/>',
+  'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+  'chevron-down': '<path d="m6 9 6 6 6-6"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  bell: '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
+  'log-out': '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+};
+const ic = (n, s = 16) => `<svg class="ic" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
+const HUES = ['#3b82f6', '#16a34a', '#d97706', '#db2777', '#7c3aed', '#ea580c', '#0891b2'];
+function avatar(name, i) {
+  return `<span class="avatar" style="--c:${HUES[i % HUES.length]}">${esc(String(name).trim().charAt(0).toUpperCase() || '?')}</span>`;
+}
+const tone = n => (n < 0 ? 'neg' : '');
+const iconBtn = (act, icon, label, attrs = '') => `<button class="icon-btn" data-act="${act}" ${attrs} aria-label="${label}">${ic(icon)}</button>`;
+const monthNav = title => `<header class="monthnav">${iconBtn('prev', 'chevron-left', 'Previous month')}<h1>${title}</h1>${iconBtn('next', 'chevron-right', 'Next month')}</header>`;
+const stat = (label, value, extra = '') => `<div class="stat"><div class="label">${label}</div><div class="num ${extra}">${value}</div></div>`;
+
+/* ---------- screens before sign-in ---------- */
 function cardScreen(title, body) {
-  return `<div class="monthbar"><h1>Saving Planner</h1></div><h2>${title}</h2><div class="list" style="padding:14px">${body}</div>${msg ? `<div class="warn">${esc(msg)}</div>` : ''}`;
+  return `<div class="auth"><div class="wordmark">Saving Planner</div><h1 class="auth-title">${title}</h1>
+    <div class="group pad">${body}</div>${msg ? `<p class="warn" role="alert">${esc(msg)}</p>` : ''}</div>`;
 }
 function viewSetup() {
-  return cardScreen('Connect your shared database', `<p class="note">Create a free Supabase project, run <code>supabase/schema.sql</code>, then paste the Project URL and anon key (Project Settings → API).</p>
-    <form data-act="setup"><div class="field"><input type="text" placeholder="https://xxxx.supabase.co" required></div>
-    <div class="field"><input type="text" placeholder="anon public key" required></div>
-    <div class="btnrow"><button class="btn">Connect</button><button type="button" class="btn sec" data-act="localonly">Use on this device only</button></div></form>`);
+  return cardScreen('Connect your shared database', `<p class="note">Create a free Supabase project, run <code>supabase/schema.sql</code>, then paste the Project URL and anon key from Project Settings → API.</p>
+    <form data-act="setup" class="stack"><input type="text" placeholder="https://xxxx.supabase.co" required>
+    <input type="text" placeholder="Anon public key" required>
+    <div class="btnrow"><button class="btn primary">Connect</button><button type="button" class="btn" data-act="localonly">Use on this device only</button></div></form>`);
 }
 function viewAuth() {
   const up = authMode === 'signup';
-  return cardScreen(up ? 'Create your account' : 'Sign in', `<form data-act="auth">
-    <div class="field"><input type="email" placeholder="Email" autocomplete="email" required></div>
-    <div class="field"><input type="password" placeholder="Password (min 6 characters)" minlength="6" autocomplete="${up ? 'new-password' : 'current-password'}" required></div>
-    <div class="btnrow"><button class="btn">${up ? 'Sign up' : 'Sign in'}</button>
-    <button type="button" class="btn sec" data-act="authmode">${up ? 'I have an account' : 'Create account'}</button></div></form>`);
+  return cardScreen(up ? 'Create your account' : 'Welcome back', `<form data-act="auth" class="stack">
+    <input type="email" placeholder="Email" autocomplete="email" required>
+    <input type="password" placeholder="Password, at least 6 characters" minlength="6" autocomplete="${up ? 'new-password' : 'current-password'}" required>
+    <div class="btnrow"><button class="btn primary">${up ? 'Sign up' : 'Sign in'}</button>
+    <button type="button" class="btn ghost" data-act="authmode">${up ? 'I have an account' : 'Create account'}</button></div></form>`);
 }
 function viewHousehold() {
-  return cardScreen('Set up your household', `<p class="note">Signed in as ${esc(cloud.email)}. One of you creates the household; the other joins with its invite code.</p>
-    <form data-act="hh-create"><div class="field"><input type="text" placeholder="Household name (e.g. Mahdi & Maedeh)"><button class="btn">Create</button></div></form>
-    <p class="note">Existing data on this device will be uploaded to the new household.</p>
-    <form data-act="hh-join"><div class="field"><input type="text" placeholder="Invite code" required><button class="btn">Join</button></div></form>
-    <div class="btnrow"><button class="btn sec" data-act="signout">Sign out</button></div>`);
+  return cardScreen('Set up your household', `<p class="note">Signed in as ${esc(cloud.email)}. One of you creates the household, the other joins with its invite code.</p>
+    <form data-act="hh-create" class="inline"><input type="text" placeholder="Household name"><button class="btn primary">Create</button></form>
+    <p class="note">Data already on this device is uploaded to the new household.</p>
+    <form data-act="hh-join" class="inline"><input type="text" placeholder="Invite code" required><button class="btn">Join</button></form>
+    <div class="btnrow"><button class="btn ghost" data-act="signout">${ic('log-out')}Sign out</button></div>`);
 }
 function accountSection() {
-  if (!sbConfig()) return `<h2>Shared database</h2><div class="btnrow"><button class="btn" data-act="gosetup">Set up shared database</button></div>`;
+  if (!sbConfig()) return `<h2>Shared database</h2><div class="group pad"><p class="note">Keep your data in sync between your phones.</p><button class="btn primary" data-act="gosetup">Set up shared database</button></div>`;
   if (!cloud.on) return '';
-  return `<h2>Shared household</h2><div class="card"><div class="l">Signed in as ${esc(cloud.email)} · ${esc(cloud.name)}</div>
-    <div class="l">Invite code for your partner: <b style="font-size:1.1rem">${esc(cloud.code)}</b></div>
-    <div class="l" id="syncstatus">${esc(cloud.status)}</div></div>
-    <div class="btnrow"><button class="btn sec" data-act="signout">Sign out</button></div>`;
+  return `<h2>Household</h2><div class="group">
+    <div class="line"><span>Signed in as</span><b>${esc(cloud.email)}</b></div>
+    <div class="line"><span>${esc(cloud.name)}</span><span id="syncstatus" class="muted">${esc(cloud.status)}</span></div>
+    <div class="line"><span>Invite code for your partner</span><b class="code">${esc(cloud.code)}</b></div>
+    <div class="line"><button class="btn ghost" data-act="signout">${ic('log-out')}Sign out</button></div></div>`;
 }
 
 /* ---------- views ---------- */
 function entryRows(kind, name, list) {
-  const key = `${kind}:${name}`;
-  const rows = list.map(e => `<div class="entry"><span>${esc(e.note || 'Entry')}</span><span>${money(e.amt)}
-    <button data-act="del" data-kind="${kind}" data-name="${esc(name)}" data-id="${e.id}" aria-label="Delete entry">✕</button></span></div>`).join('');
+  const rows = list.map(e => `<div class="entry"><span>${esc(e.note || 'Entry')}</span><span class="entry-r"><span class="amt">${money(e.amt)}</span>
+    ${iconBtn('del', 'x', 'Delete entry', `data-kind="${kind}" data-name="${esc(name)}" data-id="${e.id}"`)}</span></div>`).join('');
   return `<div class="entries">${rows}
     <form class="addform" data-act="add" data-kind="${kind}" data-name="${esc(name)}">
-      <input type="number" step="0.01" inputmode="decimal" placeholder="Amount" required>
-      <input type="text" placeholder="Note (optional)">
-      <button class="btn">Add</button></form></div>`;
+      <input type="number" step="0.01" inputmode="decimal" placeholder="Amount" required aria-label="Amount">
+      <input type="text" placeholder="Note" aria-label="Note"><button class="btn primary">Add</button></form></div>`;
 }
 function section(kind, names, m, label) {
   const data = kind === 'i' ? m.income : m.expenses;
   const all = [...new Set([...names.map(n => n.name || n), ...Object.keys(data)])];
   const fixed = new Set(S.categories.filter(c => c.fixed).map(c => c.name));
   const total = all.reduce((a, n) => a + sum(data[n] || []), 0);
-  return `<h2>${label} · ${money(total)}</h2><div class="list ${kind === 'i' ? 'inc' : 'exp'}">` + all.map(n => {
-    const list = data[n] || [], isOpen = open.has(`${kind}:${n}`);
-    return `<button class="row head" data-act="toggle" data-key="${kind}:${esc(n)}"><span>${esc(n)}${kind === 'e' && fixed.has(n) ? '<span class="tag">fixed</span>' : ''}</span>
-      <span class="amt">${money(sum(list))} ${isOpen ? '▾' : '▸'}</span></button>${isOpen ? entryRows(kind, n, list) : ''}`;
+  return `<div class="sec-head"><h2>${label}</h2><span class="muted num-sm">${money(total)}</span></div><div class="group">` + all.map(n => {
+    const list = data[n] || [], isOpen = open.has(`${kind}:${n}`), v = sum(list);
+    return `<button class="row" data-act="toggle" data-key="${kind}:${esc(n)}" aria-expanded="${isOpen}">
+      ${kind === 'i' ? avatar(n, Math.max(0, S.sources.indexOf(n))) : ''}<span class="name">${esc(n)}${kind === 'e' && fixed.has(n) ? '<span class="badge">Fixed</span>' : ''}</span>
+      <span class="amt ${v ? '' : 'zero'}">${money(v)}</span><span class="chev ${isOpen ? 'open' : ''}">${ic('chevron-down', 14)}</span></button>${isOpen ? entryRows(kind, n, list) : ''}`;
   }).join('') + '</div>';
 }
 function viewMonth() {
   const m = ensureMonth(cur), c = calc(cur);
   const r = reminderState();
   const isNow = cur === keyOf(new Date());
-  const banner = isNow && r ? `<div class="banner">${esc(r.title)}<small>${esc(r.body)}</small></div>` : '';
-  return `<div class="monthbar"><button data-act="prev" aria-label="Previous month">‹</button><h1>${monthName(cur)}</h1><button data-act="next" aria-label="Next month">›</button></div>
-  ${banner}
-  <div class="cards">
-    <div class="card inc"><div class="l">Income</div><div class="v">${money(c.income)}</div></div>
-    <div class="card exp"><div class="l">Expenses</div><div class="v">${money(c.expenses)}</div></div>
-    <div class="card"><div class="l">Spendings (without fixed)</div><div class="v">${money(c.variable)}</div></div>
-    <div class="card"><div class="l">Planned savings</div><div class="v">${money(c.planned)}</div></div>
-    <div class="card bal"><div class="l">Balance (income − expenses)</div><div class="v ${cls(c.balance)}">${money(c.balance)}</div>
-      <div class="l">After planned savings: <b class="${cls(c.afterSavings)}">${money(c.afterSavings)}</b></div></div>
-  </div>
+  const notice = isNow && r ? `<div class="notice">${ic('bell', 18)}<div><b>${esc(r.title)}</b><span>${esc(r.body)}</span></div></div>` : '';
+  return `${monthNav(monthName(cur))}${notice}
+  <section class="hero"><div class="label">Balance</div>
+    <div class="big ${tone(c.balance)}">${money(c.balance)}</div>
+    <div class="sub">${money(c.afterSavings)} after planned savings of ${money(c.planned)}</div>
+    <div class="stats">${stat('Income', money(c.income))}${stat('Expenses', money(c.expenses))}${stat('Spent, no fixed', money(c.variable))}</div></section>
   ${section('i', S.sources, m, 'Income')}
   ${section('e', S.categories, m, 'Expenses')}`;
 }
 function viewSavings() {
   const m = ensureMonth(cur), c = calc(cur);
   const goals = c.plan.map(g => `<div class="goal">
-    <div class="top"><input type="text" value="${esc(g.name)}" data-act="goal-name" data-id="${g.id}" aria-label="Goal name">
-      <input type="number" min="0" max="100" step="0.5" value="${g.pct}" data-act="goal-pct" data-id="${g.id}" aria-label="Percent"> %
-      <button class="btn sec" data-act="goal-del" data-id="${g.id}" aria-label="Remove goal">✕</button></div>
-    <div class="bar"><i style="width:${Math.min(100, g.pct)}%"></i></div>
-    <div class="sub"><b>${money(g.amount)}</b>
-      <label><input type="checkbox" data-act="goal-done" data-id="${g.id}" ${g.done ? 'checked' : ''}> Moved to savings</label></div></div>`).join('');
-  return `<div class="monthbar"><button data-act="prev">‹</button><h1>${monthName(cur)}</h1><button data-act="next">›</button></div>
-  <div class="cards">
-    <div class="card inc"><div class="l">Income this month</div><div class="v">${money(c.income)}</div></div>
-    <div class="card"><div class="l">Allocated</div><div class="v">${c.pctTotal}% · ${money(c.planned)}</div></div>
-    <div class="card"><div class="l">Actually moved</div><div class="v">${money(c.saved)}</div></div>
-    <div class="card"><div class="l">Left after expenses & savings</div><div class="v ${cls(c.afterSavings)}">${money(c.afterSavings)}</div></div>
-  </div>
-  <h2>Savings plan (% of income)</h2>
-  ${c.pctTotal > 100 ? '<div class="warn">Your goals add up to more than 100% of income.</div>' : ''}
-  ${c.afterSavings < 0 && c.income > 0 ? '<div class="warn">Expenses plus savings exceed this month\'s income.</div>' : ''}
-  <div class="list">${goals || '<div class="goal note">No goals yet — add one below.</div>'}</div>
-  <form class="field" data-act="goal-add"><input type="text" placeholder="Goal (e.g. Vacation)" required>
-    <input type="number" min="0" max="100" step="0.5" placeholder="%" style="width:80px" required><button class="btn">Add goal</button></form>
+    <div class="goal-top"><input type="text" value="${esc(g.name)}" data-act="goal-name" data-id="${g.id}" aria-label="Goal name">
+      <label class="pct"><input type="number" min="0" max="100" step="0.5" value="${g.pct}" data-act="goal-pct" data-id="${g.id}" aria-label="Percent of income"><span>%</span></label>
+      ${iconBtn('goal-del', 'x', 'Remove goal', `data-id="${g.id}"`)}</div>
+    <div class="track"><i style="width:${Math.min(100, g.pct)}%"></i></div>
+    <div class="goal-bot"><b class="num-md">${money(g.amount)}</b>
+      <label class="moved"><input type="checkbox" data-act="goal-done" data-id="${g.id}" ${g.done ? 'checked' : ''}><span>Moved to savings</span></label></div></div>`).join('');
+  const warns = (c.pctTotal > 100 ? '<p class="warn">Your goals add up to more than 100% of income.</p>' : '') +
+    (c.afterSavings < 0 && c.income > 0 ? '<p class="warn">Expenses plus savings are more than this month\'s income.</p>' : '');
+  return `${monthNav(monthName(cur))}
+  <section class="hero"><div class="label">Planned savings</div><div class="big">${money(c.planned)}</div>
+    <div class="sub">${c.pctTotal}% of ${money(c.income)} income</div>
+    <div class="stats two">${stat('Moved so far', money(c.saved))}${stat('Left after savings', money(c.afterSavings), tone(c.afterSavings))}</div></section>
+  <div class="sec-head"><h2>Savings plan</h2></div>${warns}
+  <div class="group">${goals || '<div class="empty">No goals yet. Add one below.</div>'}</div>
+  <form class="inline addgoal" data-act="goal-add"><input type="text" placeholder="New goal" required>
+    <input type="number" min="0" max="100" step="0.5" placeholder="%" class="narrow" required><button class="btn primary">Add goal</button></form>
   <p class="note">Changes apply to ${monthName(cur)} and to new months. Past months keep their own plan.</p>`;
 }
 function viewHistory() {
   const keys = Object.keys(S.months).filter(k => !isPristine(S.months[k])).sort().reverse();
   let totalSaved = 0, totalBal = 0;
   const rows = keys.map(k => { const c = calc(k); totalSaved += c.saved; totalBal += c.balance;
-    return `<tr class="clickable" data-act="goto" data-key="${k}"><td>${monthName(k)}</td><td>${money(c.income)}</td><td>${money(c.expenses)}</td>
-      <td class="${cls(c.balance)}">${money(c.balance)}</td><td>${money(c.saved)}</td></tr>`; }).join('');
-  return `<div class="monthbar"><h1>History</h1></div>
-  <div class="cards"><div class="card"><div class="l">Total saved (moved)</div><div class="v">${money(totalSaved)}</div></div>
-    <div class="card"><div class="l">Cumulative balance</div><div class="v ${cls(totalBal)}">${money(totalBal)}</div></div></div>
-  <h2>Month by month</h2>
-  <table><tr><th>Month</th><th>Income</th><th>Spent</th><th>Balance</th><th>Saved</th></tr>${rows || '<tr><td colspan="5">No data yet</td></tr>'}</table>
-  <p class="note">Tap a month to open it. Import your past sheet data under Settings → Import.</p>`;
+    return `<button class="ledger" data-act="goto" data-key="${k}"><span class="name">${monthName(k)}</span><span>${money(c.income)}</span><span>${money(c.expenses)}</span>
+      <span class="${tone(c.balance)}">${money(c.balance)}</span><span>${money(c.saved)}</span></button>`; }).join('');
+  return `<header class="monthnav plain"><h1>History</h1></header>
+  <section class="hero"><div class="label">Total saved</div><div class="big">${money(totalSaved)}</div>
+    <div class="sub">Cumulative balance ${money(totalBal)}</div></section>
+  <div class="sec-head"><h2>Month by month</h2></div>
+  <div class="group ledger-wrap"><div class="ledger head"><span>Month</span><span>Income</span><span>Spent</span><span>Balance</span><span>Saved</span></div>
+  ${rows || '<div class="empty">No months yet.</div>'}</div>
+  <p class="note">Tap a month to open it. Bring in old sheet data under Settings, Import.</p>`;
 }
 function viewSettings() {
-  const cats = S.categories.map((c, i) => `<div class="field"><input type="text" value="${esc(c.name)}" data-act="cat-name" data-i="${i}">
-    <label><input type="checkbox" data-act="cat-fixed" data-i="${i}" ${c.fixed ? 'checked' : ''}> fixed</label>
-    ${c.fixed ? `<input type="number" style="width:90px" placeholder="auto/mo" value="${c.auto || ''}" data-act="cat-auto" data-i="${i}">` : ''}
-    <button class="btn sec" data-act="cat-del" data-i="${i}">✕</button></div>`).join('');
-  const srcs = S.sources.map((s, i) => `<div class="field"><input type="text" value="${esc(s)}" data-act="src-name" data-i="${i}">
-    <button class="btn sec" data-act="src-del" data-i="${i}">✕</button></div>`).join('');
+  const cats = S.categories.map((c, i) => `<div class="line edit"><input type="text" value="${esc(c.name)}" data-act="cat-name" data-i="${i}" aria-label="Category name">
+    <label class="moved"><input type="checkbox" data-act="cat-fixed" data-i="${i}" ${c.fixed ? 'checked' : ''}><span>Fixed</span></label>
+    ${c.fixed ? `<input type="number" class="narrow" placeholder="Auto" value="${c.auto || ''}" data-act="cat-auto" data-i="${i}" aria-label="Amount added every month">` : ''}
+    ${iconBtn('cat-del', 'x', 'Remove category', `data-i="${i}"`)}</div>`).join('');
+  const srcs = S.sources.map((s, i) => `<div class="line edit">${avatar(s, i)}<input type="text" value="${esc(s)}" data-act="src-name" data-i="${i}" aria-label="Name">
+    ${iconBtn('src-del', 'x', 'Remove source', `data-i="${i}"`)}</div>`).join('');
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
-  return `<div class="monthbar"><h1>Settings</h1></div>
+  return `<header class="monthnav plain"><h1>Settings</h1></header>
   ${accountSection()}
-  <h2>Reminders</h2>
-  <div class="field"><label><input type="checkbox" data-act="notify" ${S.settings.notify ? 'checked' : ''}> Remind me mid-month and at month end</label></div>
-  <div class="field">Mid-month reminder on day <input type="number" min="1" max="28" style="width:70px" value="${S.settings.midDay}" data-act="midday"></div>
-  <div class="btnrow"><button class="btn" data-act="perm">Enable notifications (${perm})</button>
-    <button class="btn sec" data-act="ics">Add to my calendar (.ics)</button></div>
-  <p class="note">Notifications show when you open the app on/after the reminder date. For alerts that arrive even when the app is closed, import the calendar file — it repeats monthly on the mid-month day and the last day of each month.</p>
-  <h2>Currency</h2><div class="field"><input type="text" style="max-width:80px" value="${esc(S.settings.currency)}" data-act="currency"></div>
-  <h2>Income sources (people)</h2>${srcs}
-  <form class="field" data-act="src-add"><input type="text" placeholder="New source" required><button class="btn">Add</button></form>
-  <h2>Expense categories</h2>${cats}
-  <form class="field" data-act="cat-add"><input type="text" placeholder="New category" required><button class="btn">Add</button></form>
-  <p class="note">"Fixed" categories (e.g. Rent) are left out of "Spendings (without fixed)". Set an auto amount to pre-fill it every new month.</p>
-  <h2>Backup & import</h2>
-  <div class="btnrow"><button class="btn sec" data-act="export">Download backup (JSON)</button>
-    <label class="btn sec">Restore backup<input type="file" accept=".json" data-act="restore" hidden></label></div>
-  <p class="note">Import past months from your sheet — paste CSV lines in the form <code>month,type,category,amount</code>, e.g. <code>2024-11,expense,Grocery,420.50</code> or <code>2024-11,income,Mahdi,3000</code>.</p>
-  <textarea id="csv" placeholder="2024-11,income,Mahdi,3000&#10;2024-11,expense,Rent,1600"></textarea>
-  <div class="btnrow"><button class="btn" data-act="csv">Import CSV</button>${cloud.on ? '' : '<button class="btn danger" data-act="wipe">Erase all data</button>'}</div>`;
+  <h2>Reminders</h2><div class="group">
+    <label class="line"><span>Remind me mid-month and at month end</span><input type="checkbox" class="switch" data-act="notify" ${S.settings.notify ? 'checked' : ''}></label>
+    <div class="line"><span>Mid-month reminder day</span><input type="number" min="1" max="28" class="narrow" value="${S.settings.midDay}" data-act="midday"></div>
+    <div class="line"><button class="btn primary" data-act="perm">${ic('bell')}Enable notifications</button><span class="muted">${perm}</span></div>
+    <div class="line"><button class="btn" data-act="ics">${ic('calendar')}Add to my calendar</button></div></div>
+  <p class="note">Notifications show when you open the app on or after the reminder date. The calendar file repeats every month, even when the app is closed.</p>
+  <h2>Currency</h2><div class="group"><div class="line"><span>Symbol</span><input type="text" class="narrow" value="${esc(S.settings.currency)}" data-act="currency"></div></div>
+  <h2>People</h2><div class="group">${srcs}</div>
+  <form class="inline" data-act="src-add"><input type="text" placeholder="Add a person or source" required><button class="btn">${ic('plus')}Add</button></form>
+  <h2>Expense categories</h2><div class="group">${cats}</div>
+  <form class="inline" data-act="cat-add"><input type="text" placeholder="Add a category" required><button class="btn">${ic('plus')}Add</button></form>
+  <p class="note">Fixed categories, like rent, are left out of "Spent, no fixed". Give one an amount to add it to every new month.</p>
+  <h2>Backup and import</h2><div class="group pad">
+    <div class="btnrow"><button class="btn" data-act="export">Download backup</button>
+    <label class="btn">Restore backup<input type="file" accept=".json" data-act="restore" hidden></label></div>
+    <p class="note">Paste past months as CSV lines: <code>month,type,category,amount</code>, like <code>2024-11,expense,Grocery,420.50</code>.</p>
+    <textarea id="csv" placeholder="2024-11,income,Mahdi,3000&#10;2024-11,expense,Rent,1600"></textarea>
+    <div class="btnrow"><button class="btn primary" data-act="csv">Import</button>${cloud.on ? '' : '<button class="btn danger" data-act="wipe">Erase all data</button>'}</div></div>`;
 }
+
 const views = { month: viewMonth, savings: viewSavings, history: viewHistory, settings: viewSettings };
 const screens = { setup: viewSetup, auth: viewAuth, household: viewHousehold, loading: () => '' };
 function render() {
