@@ -406,9 +406,10 @@ function viewSettings() {
   <h2>Backup and import</h2><div class="group pad">
     <div class="btnrow"><button class="btn" data-act="export">Download backup</button>
     <label class="btn">Restore backup<input type="file" accept=".json" data-act="restore" hidden></label></div>
-    <p class="note">Paste past months as CSV lines: <code>month,type,category,amount</code>, like <code>2024-11,expense,Grocery,420.50</code>.</p>
-    <textarea id="csv" placeholder="2024-11,income,Mahdi,3000&#10;2024-11,expense,Rent,1600"></textarea>
-    <div class="btnrow"><button class="btn primary" data-act="csv">Import</button>${cloud.on ? '' : '<button class="btn danger" data-act="wipe">Erase all data</button>'}</div></div>`;
+
+    </div>
+  <h2>Import past months</h2><div class="group pad">${importPanel()}</div>
+  ${cloud.on ? '' : '<div class="btnrow" style="margin-top:20px"><button class="btn danger" data-act="wipe">Erase all data</button></div>'}`;
 }
 
 const views = { month: viewMonth, savings: viewSavings, history: viewHistory, settings: viewSettings };
@@ -435,18 +436,66 @@ function makeICS() {
     mk('End-of-month: make your savings happen', 'FREQ=MONTHLY;BYMONTHDAY=-1', `${d0}${pad(daysInMonth(now))}`) +
     'END:VCALENDAR\r\n';
 }
-function importCSV(text) {
-  let n = 0;
+/* ---------- import: paste or upload, review the months found, tick the ones to import ---------- */
+const imp = { text: '', month: keyOf(new Date()), parsed: null, sel: new Set(), mode: 'skip' };
+function parseImport(text, fallbackMonth) {
+  const months = {}; let bad = 0;
+  const incomeNames = new Set(S.sources.map(x => x.toLowerCase()));
   text.split(/\r?\n/).forEach(line => {
-    const p = line.split(',').map(s => s.trim());
-    if (p.length < 4 || !/^\d{4}-\d{2}$/.test(p[0])) return;
-    const amt = parseFloat(p[3]); if (isNaN(amt)) return;
-    const kind = /^inc/i.test(p[1]) ? 'income' : 'expenses';
-    if (!S.months[p[0]]) S.months[p[0]] = { income: {}, expenses: {}, plan: [], done: {} }; // history: no auto rent, no plan
-    (S.months[p[0]][kind][p[2]] = S.months[p[0]][kind][p[2]] || []).push({ id: uid(), amt, note: 'Imported' });
-    n++;
+    line = line.trim(); if (!line) return;
+    const p = line.split(/[,\t;]/).map(x => x.trim().replace(/^"|"$/g, ''));
+    if (/^(amount|total)$/i.test(p[p.length - 1])) return; // header row
+    let k, type, cat, amtS;
+    if (p.length >= 4 && /^\d{4}-\d{2}/.test(p[0])) { k = p[0].slice(0, 7); [, type, cat, amtS] = p; }       // month,type,category,amount
+    else if (p.length === 3) { k = fallbackMonth; [type, cat, amtS] = p; }                                   // type,category,amount
+    else if (p.length === 2) { k = fallbackMonth; [cat, amtS] = p; type = incomeNames.has(cat.toLowerCase()) ? 'income' : 'expense'; } // category,amount
+    else { bad++; return; }
+    const amt = parseFloat(String(amtS).replace(/[^0-9.\-]/g, ''));
+    if (!k || !cat || isNaN(amt)) { if (!/amount|total/i.test(amtS || '')) bad++; return; } // skip header lines quietly
+    const m = months[k] = months[k] || { income: {}, expenses: {}, rows: 0 };
+    const kind = /^inc/i.test(type) ? 'income' : 'expenses';
+    (m[kind][cat] = m[kind][cat] || []).push(amt); m.rows++;
   });
-  return n;
+  return { months, bad };
+}
+function applyImport() {
+  const { months } = imp.parsed; let n = 0, skipped = 0;
+  for (const k of [...imp.sel].sort()) {
+    const src = months[k]; if (!src) continue;
+    const had = S.months[k] && !isPristine(S.months[k]);
+    if (had && imp.mode === 'skip') { skipped++; continue; }
+    const m = S.months[k] = S.months[k] || { income: {}, expenses: {}, plan: [], done: {} }; // history: no auto rent, no plan
+    if (had && imp.mode === 'replace') { m.income = {}; m.expenses = {}; }
+    if (!had) { m.income = {}; m.expenses = {}; }      // drop auto-filled rent so imported numbers are the truth
+    for (const kind of ['income', 'expenses']) for (const [cat, list] of Object.entries(src[kind])) {
+      m[kind][cat] = (m[kind][cat] || []).concat(list.map(amt => ({ id: uid(), amt, note: 'Imported' })));
+    }
+    n++;
+  }
+  return { n, skipped };
+}
+const sumArr = o => Object.values(o).reduce((a, l) => a + l.reduce((x, y) => x + y, 0), 0);
+function importPanel() {
+  const ms = imp.parsed ? Object.keys(imp.parsed.months).sort().reverse() : [];
+  let review = '';
+  if (imp.parsed) {
+    review = ms.length ? `<div class="sec-head slim"><b>Months found (${ms.length})</b>
+      <span><button class="btn ghost sm" data-act="imp-all">Select all</button><button class="btn ghost sm" data-act="imp-none">None</button></span></div>
+      <div class="group inner">${ms.map(k => { const m = imp.parsed.months[k], has = S.months[k] && !isPristine(S.months[k]);
+        return `<label class="line"><input type="checkbox" data-act="imp-sel" data-key="${k}" ${imp.sel.has(k) ? 'checked' : ''}>
+          <span class="grow"><b>${monthName(k)}</b>${has ? '<span class="badge">Has data</span>' : ''}<small>${money(sumArr(m.income))} in · ${money(sumArr(m.expenses))} out · ${m.rows} rows</small></span></label>`; }).join('')}</div>
+      <fieldset class="modes"><legend>If a month already has data</legend>
+        ${[['skip', 'Skip it'], ['add', 'Add to it'], ['replace', 'Replace it']].map(([v, l]) => `<label class="moved"><input type="radio" name="impmode" data-act="imp-mode" value="${v}" ${imp.mode === v ? 'checked' : ''}><span>${l}</span></label>`).join('')}</fieldset>
+      <div class="btnrow"><button class="btn primary" data-act="imp-apply" ${imp.sel.size ? '' : 'disabled'}>Import ${imp.sel.size} month${imp.sel.size === 1 ? '' : 's'}</button>
+        <button class="btn ghost" data-act="imp-clear">Cancel</button></div>`
+      : '<p class="warn">No usable rows found. Check the format below.</p>';
+    if (imp.parsed.bad) review += `<p class="note">${imp.parsed.bad} line(s) were skipped because they could not be read.</p>`;
+  }
+  return `<div class="field-row"><label class="note nm">Month for lines without a date</label><input type="month" data-act="imp-month" value="${esc(imp.month)}"></div>
+    <textarea id="csv" data-act="imp-text" placeholder="2024-11,income,Mahdi,3000&#10;2024-11,expense,Rent,1600&#10;&#10;or just: Grocery,420.50">${esc(imp.text)}</textarea>
+    <div class="btnrow"><button class="btn primary" data-act="imp-review">Review</button>
+      <label class="btn">Choose CSV file<input type="file" accept=".csv,.txt,text/csv" data-act="imp-file" hidden></label></div>
+    <p class="note">Each line is <code>month,type,category,amount</code>, like <code>2024-11,expense,Grocery,420.50</code>. Lines with only <code>category,amount</code> go into the month picked above, and are counted as income when the name is one of your people.</p>${review}`;
 }
 function findGoal(id) { return ensureMonth(cur).plan.find(g => g.id === id); }
 function syncTemplate(g) { const t = S.goals.find(x => x.id === g.id); if (t) { t.name = g.name; t.pct = g.pct; } }
@@ -474,7 +523,12 @@ document.addEventListener('click', e => {
       return;
     case 'ics': download('saving-planner-reminders.ics', makeICS(), 'text/calendar'); return;
     case 'export': download(`saving-planner-${keyOf(new Date())}.json`, JSON.stringify(S, null, 2), 'application/json'); return;
-    case 'csv': { const n = importCSV(document.getElementById('csv').value); save(); alert(`Imported ${n} row(s).`); break; }
+    case 'imp-review': { const ta = document.getElementById('csv'); if (ta) imp.text = ta.value; imp.parsed = parseImport(imp.text, imp.month); imp.sel = new Set(Object.keys(imp.parsed.months)); break; }
+    case 'imp-all': imp.sel = new Set(Object.keys(imp.parsed.months)); break;
+    case 'imp-none': imp.sel = new Set(); break;
+    case 'imp-clear': imp.parsed = null; imp.sel = new Set(); imp.text = ''; break;
+    case 'imp-apply': { const r = applyImport(); save(); imp.parsed = null; imp.sel = new Set(); imp.text = '';
+      alert(`Imported ${r.n} month${r.n === 1 ? '' : 's'}${r.skipped ? `, skipped ${r.skipped} that already had data` : ''}.`); break; }
     case 'wipe': if (confirm('Erase ALL data on this device? This cannot be undone.')) { S = defaultState(); save(); } break;
     default: return;
   }
@@ -509,6 +563,7 @@ async function doJoinHousehold(code) {
     cloud.hid = data; msg = ''; await enterApp(false);
   } catch (e) { msg = e.message; render(); }
 }
+document.addEventListener('input', e => { if (e.target.dataset && e.target.dataset.act === 'imp-text') imp.text = e.target.value; });
 document.addEventListener('submit', e => {
   const f = e.target.closest('form[data-act]'); if (!f) return;
   e.preventDefault();
@@ -541,6 +596,11 @@ document.addEventListener('change', e => {
     case 'src-name': S.sources[i] = t.value.trim() || S.sources[i]; break;
     case 'currency': S.settings.currency = t.value || '$'; break;
     case 'notify': S.settings.notify = t.checked; break;
+    case 'imp-sel': t.checked ? imp.sel.add(t.dataset.key) : imp.sel.delete(t.dataset.key); render(); return;
+    case 'imp-mode': imp.mode = t.value; return;
+    case 'imp-month': imp.month = t.value || keyOf(new Date()); return;
+    case 'imp-file': { const f = t.files[0]; if (!f) return;
+      f.text().then(txt => { imp.text = txt; imp.parsed = parseImport(txt, imp.month); imp.sel = new Set(Object.keys(imp.parsed.months)); render(); }); return; }
     case 'midday': S.settings.midDay = Math.min(28, Math.max(1, parseInt(t.value) || 15)); break;
     case 'restore': {
       const file = t.files[0]; if (!file) return;

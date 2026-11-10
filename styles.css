@@ -167,3 +167,20 @@ label.line { cursor: pointer; }
 .auth .note { margin-inline: 0; }
 
 @media (prefers-reduced-motion: reduce) { *, ::before, ::after { transition: none !important; } }
+
+/* import review */
+.field-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.field-row input[type=month] { width: auto; flex: none; }
+.nm { margin: 0; }
+.btn.sm { height: 28px; padding: 0 10px; font-size: .8125rem; }
+.btn:disabled { opacity: .5; cursor: default; }
+.sec-head.slim { align-items: center; margin: 18px 0 8px; }
+.group.inner { box-shadow: inset 0 0 0 1px var(--ss-line); border-radius: var(--ss-radius-md); }
+.group.inner .line { justify-content: flex-start; cursor: pointer; }
+.grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.grow small { color: var(--ss-text); font-size: .75rem; }
+.grow b { white-space: nowrap; }
+.grow .badge { align-self: flex-start; margin: 2px 0; }
+fieldset.modes { border: 0; padding: 0; margin: 14px 0 4px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+fieldset.modes legend { padding: 0; margin-bottom: 8px; color: var(--ss-text); font-size: .8125rem; }
+input[type=radio] { accent-color: var(--ss-accent); width: 18px; height: 18px; margin: 0; }
