@@ -158,7 +158,7 @@ input.switch:checked { background: var(--ss-accent); } input.switch:checked::aft
 button.ledger:hover { background: color-mix(in srgb, var(--ss-well) 55%, transparent); }
 .ledger.head { color: var(--ss-text); font-weight: 500; font-size: .75rem; padding-block: 10px; }
 .ledger .name { font-weight: 500; font-size: .875rem; }
-.ledger-wrap { overflow-x: auto; } .ledger-wrap .ledger { min-width: 460px; }
+.ledger-scroll { overflow-x: auto; } .ledger-scroll .ledger { min-width: 460px; }
 
 /* settings + account */
 .line { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--ss-line); min-height: 52px; }
@@ -237,3 +237,41 @@ select:focus-visible { outline: 0; box-shadow: inset 0 0 0 1.5px var(--ss-accent
 main.wide { max-width: 1040px; }
 .bento { columns: 300px; column-gap: 12px; }
 .bento > * { break-inside: avoid; margin: 0 0 12px; }
+
+/* ---------- soft colour on every card (one hue per card; the big total card stays neutral) ----------
+   Strength 15%, blur 60px. Each hue has a pale tone for the glow and a deeper "ink" for titles and progress. */
+:root {
+  --blur: 60px; --tint: .15; --tint-scale: 1;
+  --h0: 255 180 130; --h1: 130 220 185; --h2: 255 160 195; --h3: 130 185 255; --h4: 185 160 255;
+  --i0: 214 120 60;  --i1: 38 160 115;  --i2: 214 70 125;  --i3: 50 120 230;  --i4: 120 90 220;
+}
+:root[data-theme="dark"] {
+  --tint-scale: .4;
+  --h0: 255 140 90; --h1: 40 190 140; --h2: 255 90 150; --h3: 60 130 255; --h4: 140 90 255;
+  --i0: 255 165 115; --i1: 80 205 155; --i2: 255 125 175; --i3: 105 165 255; --i4: 175 145 255;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --tint-scale: .4;
+    --h0: 255 140 90; --h1: 40 190 140; --h2: 255 90 150; --h3: 60 130 255; --h4: 140 90 255;
+    --i0: 255 165 115; --i1: 80 205 155; --i2: 255 125 175; --i3: 105 165 255; --i4: 175 145 255;
+  }
+}
+.tint[data-hue="0"] { --g: var(--h0); --ink: var(--i0); } .tint[data-hue="1"] { --g: var(--h1); --ink: var(--i1); }
+.tint[data-hue="2"] { --g: var(--h2); --ink: var(--i2); } .tint[data-hue="3"] { --g: var(--h3); --ink: var(--i3); }
+.tint[data-hue="4"] { --g: var(--h4); --ink: var(--i4); }
+.tint { --n: calc(var(--tint) * var(--tint-scale)); position: relative; overflow: hidden; isolation: isolate; }
+/* four soft blobs of the card's one colour, blurred, behind the content */
+.tint::before {
+  content: ""; position: absolute; inset: -30%; z-index: -1; pointer-events: none; filter: blur(var(--blur)); transform: translateZ(0);
+  background:
+    radial-gradient(34% 38% at 24% 24%, rgb(var(--g) / calc(var(--n) * 1.7)), transparent 100%),
+    radial-gradient(36% 40% at 77% 77%, rgb(var(--g) / calc(var(--n) * 1.6)), transparent 100%),
+    radial-gradient(28% 32% at 72% 28%, rgb(var(--g) / calc(var(--n) * .9)), transparent 100%),
+    radial-gradient(28% 32% at 30% 72%, rgb(var(--g) / calc(var(--n) * .7)), transparent 100%);
+}
+/* titles and progress bars use the card's own colour; a bar is green only when its goal is done */
+.goal .goal-name, .tint > .card-title, .addgoal > b { color: color-mix(in srgb, rgb(var(--ink)) 72%, var(--ss-text-strong)); }
+.goal .track { background: rgb(var(--ink) / .2); }
+.goal .track i { background: rgb(var(--ink)); }
+.goal.done .track i { background: #22c55e; }

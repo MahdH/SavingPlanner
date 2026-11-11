@@ -16,7 +16,7 @@ function defaultState() {
       { name: 'Home Appliance' }, { name: 'Other' },
     ],
     accounts: ['Savings account', 'TFSA', 'RRSP', 'Bitcoin'], // where savings can go; edited in Settings
-    goals: [{ id: uid(), name: 'Home saving', pct: 17, account: '' }], // template for new months
+    goals: [{ id: uid(), name: 'Home saving', pct: 17, account: '', hue: 0 }], // template for new months
     months: {},
     notified: {},
   };
@@ -24,7 +24,7 @@ function defaultState() {
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (s && s.months) return Object.assign(defaultState(), s);
+    if (s && s.months) { const st = Object.assign(defaultState(), s); (st.goals || []).forEach((g, i) => { if (!Number.isInteger(g.hue)) g.hue = i % 5; }); return st; }
   } catch (e) { /* ignore */ }
   return defaultState();
 }
@@ -375,6 +375,9 @@ function acctOptions(selected) {
   return `<option value="">Choose account</option>` + list.map(a => `<option value="${esc(a)}" ${a === selected ? 'selected' : ''}>${esc(a)}</option>`).join('');
 }
 const shortDate = d => { try { return new Date(d + 'T00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return ''; } };
+const HUE_CYCLE = [3, 4, 1, 0, 2]; // colours for cards that are not goals
+function nextHue() { const used = new Set(S.goals.map(g => g.hue)); for (let h = 0; h < 5; h++) if (!used.has(h)) return h; return S.goals.length % 5; }
+function hueOf(g) { if (Number.isInteger(g.hue)) return g.hue; const t = S.goals.find(x => x.id === g.id); return t && Number.isInteger(t.hue) ? t.hue : 0; }
 function goalCard(g) {
   const ed = editing.has(g.id), adding = addingDep.has(g.id);
   const pct = g.amount > 0 ? Math.min(100, g.moved / g.amount * 100) : 0;
@@ -383,7 +386,7 @@ function goalCard(g) {
     <span class="amt">${money(d.amt)}</span>${ed ? iconBtn('dep-del', 'x', 'Delete deposit', `data-goal="${g.id}" data-id="${d.id}"`) : ''}</div>`).join('');
   const title = ed ? `<input type="text" value="${esc(g.name)}" data-act="goal-name" data-id="${g.id}" aria-label="Goal name">`
     : `<div class="goal-id"><div class="goal-name">${esc(g.name)}</div><div class="goal-sub">${g.pct}% of income</div></div>`;
-  return `<article class="goal ${g.done ? 'done' : ''}">
+  return `<article class="goal ${g.done ? 'done' : ''}" data-hue="${hueOf(g)}">
     <div class="goal-head">${title}<b class="goal-amt">${money(g.amount)}</b>
       ${iconBtn('goal-edit', ed ? 'check' : 'pencil', ed ? 'Done editing' : 'Edit goal', `data-id="${g.id}"`)}${iconBtn('goal-del', 'x', 'Remove goal', `data-id="${g.id}"`)}</div>
     ${ed ? `<label class="target"><span>Monthly target</span>
@@ -431,8 +434,8 @@ function viewHistory() {
   <section class="hero"><div class="label">Total saved</div><div class="big">${money(totalSaved)}</div>
     <div class="sub">Cumulative balance ${money(totalBal)}</div></section>
   <div class="sec-head"><h2>Month by month</h2></div>
-  <div class="group ledger-wrap"><div class="ledger head"><span>Month</span><span>Income</span><span>Spent</span><span>Balance</span><span>Saved</span></div>
-  ${rows || '<div class="empty">No months yet.</div>'}</div>
+  <div class="group"><div class="ledger-scroll"><div class="ledger head"><span>Month</span><span>Income</span><span>Spent</span><span>Balance</span><span>Saved</span></div>
+  ${rows || '<div class="empty">No months yet.</div>'}</div></div>
   <p class="note">Tap a month to open it. Bring in old sheet data under Settings, Import.</p>`;
 }
 function viewSettings() {
@@ -480,6 +483,16 @@ function render() {
   $app.classList.toggle('wide', screen === 'app' && tab === 'savings');
   document.getElementById('tabs').hidden = screen !== 'app';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  tintCards();
+}
+// one soft colour per card, different for each; the big total card (.hero) and the sign-in card stay neutral
+function tintCards() {
+  let i = 0;
+  $app.querySelectorAll('.group:not(.inner), .goal').forEach(el => {
+    if (el.closest('.auth')) return;
+    el.classList.add('tint');
+    if (!el.dataset.hue) el.dataset.hue = HUE_CYCLE[i++ % HUE_CYCLE.length];
+  });
 }
 
 /* ---------- actions ---------- */
@@ -560,7 +573,7 @@ function importPanel() {
     <p class="note">Each line is <code>month,type,category,amount</code>, like <code>2024-11,expense,Grocery,420.50</code>. Lines with only <code>category,amount</code> go into the month picked above, and are counted as income when the name is one of your people.</p>${review}`;
 }
 function findGoal(id) { return ensureMonth(cur).plan.find(g => g.id === id); }
-function syncTemplate(g) { const t = S.goals.find(x => x.id === g.id); if (t) { t.name = g.name; t.pct = g.pct; t.account = g.account || ''; } } // the template is what new months start from
+function syncTemplate(g) { const t = S.goals.find(x => x.id === g.id); if (t) { t.name = g.name; t.pct = g.pct; t.account = g.account || ''; if (Number.isInteger(g.hue)) t.hue = g.hue; } } // the template is what new months start from
 
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act],[data-tab]'); if (!t) return;
@@ -653,7 +666,7 @@ document.addEventListener('submit', e => {
       const acct = f.querySelector('select').value, today = new Date(), inMonth = keyOf(today) === cur;
       mo.deposits = mo.deposits || {}; (mo.deposits[g.id] = mo.deposits[g.id] || []).push({ id: uid(), amt, account: acct, date: inMonth ? `${keyOf(today)}-${pad(today.getDate())}` : '' });
       g.account = acct; syncTemplate(g); addingDep.delete(g.id); break; }
-    case 'goal-add': { const g = { id: uid(), name: v1.trim(), pct: Math.max(0, parseFloat(v2) || 0), account: '' }; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); break; }
+    case 'goal-add': { const g = { id: uid(), name: v1.trim(), pct: Math.max(0, parseFloat(v2) || 0), account: '', hue: nextHue() }; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); break; }
     case 'acc-add': { const n = v1.trim(); if (n && !S.accounts.includes(n)) S.accounts.push(n); break; }
     case 'cat-add': S.categories.push({ name: v1.trim() }); break;
     case 'src-add': S.sources.push(v1.trim()); break;
