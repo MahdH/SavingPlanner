@@ -239,9 +239,9 @@ main.wide { max-width: 1040px; }
 .bento > * { break-inside: avoid; margin: 0 0 12px; }
 
 /* ---------- soft colour on every card (one hue per card; the big total card stays neutral) ----------
-   Strength 15%, blur 60px. Each hue has a pale tone for the glow and a deeper "ink" for titles and progress. */
+   Strength 10%, blur 60px. Each hue has a pale tone for the glow and a deeper "ink" for titles and progress. */
 :root {
-  --blur: 60px; --tint: .15; --tint-scale: 1;
+  --blur: 60px; --tint: .1; --tint-scale: 1;
   --h0: 255 180 130; --h1: 130 220 185; --h2: 255 160 195; --h3: 130 185 255; --h4: 185 160 255;
   --i0: 214 120 60;  --i1: 38 160 115;  --i2: 214 70 125;  --i3: 50 120 230;  --i4: 120 90 220;
 }

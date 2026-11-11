@@ -16,15 +16,30 @@ function defaultState() {
       { name: 'Home Appliance' }, { name: 'Other' },
     ],
     accounts: ['Savings account', 'TFSA', 'RRSP', 'Bitcoin'], // where savings can go; edited in Settings
-    goals: [{ id: uid(), name: 'Home saving', pct: 17, account: '', hue: 0 }], // template for new months
+    goals: [{ id: uid(), name: 'Home saving', pct: 17, account: '', hue: Math.floor(Math.random() * 5) }], // template for new months
     months: {},
     notified: {},
   };
 }
+/* ---------- card colours: random, but stored so they stay put (0 peach, 1 mint, 2 rose, 3 sky, 4 violet) ---------- */
+function randomPerm(n = 5) { const a = [...Array(n).keys()]; for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+// give goals that have no colour a random one, different from the others (all of them when force is true)
+function assignGoalHues(goals, force) {
+  const used = new Set(force ? [] : goals.filter(g => Number.isInteger(g.hue)).map(g => g.hue));
+  const free = randomPerm().filter(h => !used.has(h)); let changed = false;
+  goals.forEach(g => { if (force || !Number.isInteger(g.hue)) { g.hue = free.length ? free.shift() : Math.floor(Math.random() * 5); changed = true; } });
+  return changed;
+}
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (s && s.months) { const st = Object.assign(defaultState(), s); (st.goals || []).forEach((g, i) => { if (!Number.isInteger(g.hue)) g.hue = i % 5; }); return st; }
+    if (s && s.months) {
+      const st = Object.assign(defaultState(), s);
+      let changed = assignGoalHues(st.goals || []);
+      if (!Array.isArray(st.settings.hueOrder) || st.settings.hueOrder.length !== 5) { st.settings.hueOrder = randomPerm(); changed = true; }
+      if (changed) { try { localStorage.setItem(STORE_KEY, JSON.stringify(st)); } catch (e) { /* ignore */ } }   // keep the colours it picked
+      return st;
+    }
   } catch (e) { /* ignore */ }
   return defaultState();
 }
@@ -97,6 +112,7 @@ function calc(k) {
 let tab = 'month';
 let cur = keyOf(new Date());
 const open = new Set();
+let focusAfterRender = null;  // selector to focus once the next render is done
 const editing = new Set();   // goal cards in edit mode
 const addingDep = new Set(); // goal cards with the deposit form open
 const $app = document.getElementById('app');
@@ -138,6 +154,7 @@ function sbConfig() {
 let sb = null, channel = null, pushTimer = null, pushing = false;
 const cloud = { on: false, hid: null, name: '', code: '', email: '', status: '' };
 const synced = { config: '', months: {} };
+let cfgHueAssigned = false;   // true when goals from the household had no colour and we picked one
 let screen = 'app', authMode = 'signin', msg = '';
 
 function isPristine(m) {
@@ -149,7 +166,7 @@ function applyConfig(c) {
   if (!c || typeof c !== 'object') return;
   if (c.sources) S.sources = c.sources;
   if (c.categories) S.categories = c.categories;
-  if (c.goals) S.goals = c.goals;
+  if (c.goals) { S.goals = c.goals; if (assignGoalHues(S.goals)) cfgHueAssigned = true; }
   if (c.accounts) S.accounts = c.accounts;
   if (c.currency) S.settings.currency = c.currency;
   if (c.midDay) S.settings.midDay = c.midDay;
@@ -206,6 +223,7 @@ async function pull() {
   cloud.name = h.data.name; cloud.code = h.data.invite_code;
   if (h.data.config && Object.keys(h.data.config).length) applyConfig(h.data.config);
   synced.config = JSON.stringify(h.data.config && Object.keys(h.data.config).length ? configOf() : {});
+  if (cfgHueAssigned) { synced.config = ''; cfgHueAssigned = false; }   // push the new colours so the other phone shows the same ones
   // keep local months that have not been uploaded yet; otherwise the cloud copy wins
   const next = {};
   m.data.forEach(r => { next[r.month] = r.data; synced.months[r.month] = JSON.stringify(r.data); });
@@ -230,6 +248,7 @@ function subscribe() {
       const j = JSON.stringify(p.new.config || {});
       if (j === synced.config) return;
       applyConfig(p.new.config); synced.config = JSON.stringify(configOf()); saveLocal(); softRender();
+      if (cfgHueAssigned) { cfgHueAssigned = false; synced.config = ''; schedulePush(); }
     })
     .subscribe();
 }
@@ -288,6 +307,7 @@ const IC = {
   'log-out': '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
   pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  shuffle: '<path d="m18 14 4 4-4 4"/><path d="m18 2 4 4-4 4"/><path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22"/><path d="M2 6h1.972a4 4 0 0 1 3.6 2.2"/><path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
 };
 const ic = (n, s = 16) => `<svg class="ic" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
@@ -375,9 +395,14 @@ function acctOptions(selected) {
   return `<option value="">Choose account</option>` + list.map(a => `<option value="${esc(a)}" ${a === selected ? 'selected' : ''}>${esc(a)}</option>`).join('');
 }
 const shortDate = d => { try { return new Date(d + 'T00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return ''; } };
-const HUE_CYCLE = [3, 4, 1, 0, 2]; // colours for cards that are not goals
-function nextHue() { const used = new Set(S.goals.map(g => g.hue)); for (let h = 0; h < 5; h++) if (!used.has(h)) return h; return S.goals.length % 5; }
-function hueOf(g) { if (Number.isInteger(g.hue)) return g.hue; const t = S.goals.find(x => x.id === g.id); return t && Number.isInteger(t.hue) ? t.hue : 0; }
+function nextHue() { const used = new Set(S.goals.map(g => g.hue)); const free = randomPerm().filter(h => !used.has(h)); return free.length ? free[0] : Math.floor(Math.random() * 5); }
+// a goal's colour: the goal's own stored colour (the template is the source of truth), never a shared default
+function hueOf(g) {
+  const t = S.goals.find(x => x.id === g.id);
+  if (t && Number.isInteger(t.hue)) return t.hue;
+  if (Number.isInteger(g.hue)) return g.hue;
+  return Math.max(0, S.goals.findIndex(x => x.id === g.id)) % 5;
+}
 function goalCard(g) {
   const ed = editing.has(g.id), adding = addingDep.has(g.id);
   const pct = g.amount > 0 ? Math.min(100, g.moved / g.amount * 100) : 0;
@@ -450,7 +475,8 @@ function viewSettings() {
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   return `<header class="monthnav plain"><h1>Settings</h1></header>
   <h2>Appearance</h2><div class="group pad"><div class="seg" role="group" aria-label="Theme">
-    ${[['light', 'Light'], ['dark', 'Dark'], ['auto', 'System']].map(([v, l]) => `<button data-act="theme" data-v="${v}" aria-pressed="${(S.settings.theme || 'light') === v}">${l}</button>`).join('')}</div></div>
+    ${[['light', 'Light'], ['dark', 'Dark'], ['auto', 'System']].map(([v, l]) => `<button data-act="theme" data-v="${v}" aria-pressed="${(S.settings.theme || 'light') === v}">${l}</button>`).join('')}</div>
+    <div class="btnrow"><button class="btn" data-act="shuffle">${ic('shuffle')}Shuffle card colours</button></div></div>
   ${accountSection()}
   <h2>Reminders</h2><div class="group">
     <label class="line"><span>Remind me mid-month and at month end</span><input type="checkbox" class="switch" data-act="notify" ${S.settings.notify ? 'checked' : ''}></label>
@@ -484,14 +510,16 @@ function render() {
   document.getElementById('tabs').hidden = screen !== 'app';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   tintCards();
+  if (focusAfterRender) { const el = document.querySelector(focusAfterRender); focusAfterRender = null; if (el) el.focus(); }
 }
-// one soft colour per card, different for each; the big total card (.hero) and the sign-in card stay neutral
+// Savings tab only: one soft random colour per card, different for each; the big total card (.hero) stays neutral
 function tintCards() {
-  let i = 0;
+  if (screen !== 'app' || tab !== 'savings') return;   // colour is only for the Savings cards; every other screen stays plain
+  let i = 0; const order = S.settings.hueOrder && S.settings.hueOrder.length === 5 ? S.settings.hueOrder : [3, 4, 1, 0, 2];
   $app.querySelectorAll('.group:not(.inner), .goal').forEach(el => {
     if (el.closest('.auth')) return;
     el.classList.add('tint');
-    if (!el.dataset.hue) el.dataset.hue = HUE_CYCLE[i++ % HUE_CYCLE.length];
+    if (!el.dataset.hue) el.dataset.hue = order[i++ % 5];
   });
 }
 
@@ -589,10 +617,11 @@ document.addEventListener('click', e => {
       if (n && !confirm(`This goal has ${n} deposit${n === 1 ? '' : 's'} logged this month. Remove it anyway?`)) return;
       editing.delete(id); addingDep.delete(id); m.plan = m.plan.filter(g => g.id !== id); if (m.deposits) delete m.deposits[id]; S.goals = S.goals.filter(g => g.id !== id); save(); break; }
     case 'goal-edit': editing.has(t.dataset.id) ? editing.delete(t.dataset.id) : editing.add(t.dataset.id); break;
-    case 'dep-open': addingDep.add(t.dataset.id); setTimeout(() => { const i = document.querySelector(`form.depform[data-id="${t.dataset.id}"] input`); if (i) i.focus(); }, 0); break;
+    case 'dep-open': addingDep.add(t.dataset.id); focusAfterRender = `form.depform[data-id="${t.dataset.id}"] input`; break;
     case 'dep-cancel': addingDep.delete(t.dataset.id); break;
     case 'dep-del': { const l = m.deposits[t.dataset.goal]; m.deposits[t.dataset.goal] = l.filter(d => d.id !== t.dataset.id); save(); break; }
     case 'dep-fill': { const f = t.closest('form'); f.querySelector('input').value = t.dataset.left; f.querySelector('input').focus(); return; }
+    case 'shuffle': { S.settings.hueOrder = randomPerm(); assignGoalHues(S.goals, true); save(); break; }   // new random colours; goal colours are shared with your partner
     case 'theme': S.settings.theme = t.dataset.v; applyTheme(); save(); break;
     case 'acc-del': S.accounts.splice(+t.dataset.i, 1); save(); break;
     case 'cat-del': S.categories.splice(+t.dataset.i, 1); save(); break;
