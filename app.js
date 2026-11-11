@@ -16,7 +16,7 @@ function defaultState() {
       { name: 'Home Appliance' }, { name: 'Other' },
     ],
     accounts: ['Savings account', 'TFSA', 'RRSP', 'Bitcoin'], // where savings can go; edited in Settings
-    goals: [{ id: uid(), name: 'Home saving', pct: 17, account: '' }], // template for new months
+    goals: [{ id: uid(), name: 'Home saving', mode: 'pct', pct: 17, amt: 0, account: '' }], // template for new months
     months: {},
     notified: {},
   };
@@ -70,7 +70,7 @@ function ensureMonth(k) {
 
 /* ---------- calculations ---------- */
 function calc(k) {
-  const m = S.months[k] || { income: {}, expenses: {}, plan: S.goals, done: {} };
+  const m = S.months[k] || { income: {}, expenses: {}, plan: S.goals, done: {}, deposits: {} };
   const income = Object.values(m.income).reduce((a, l) => a + sum(l), 0);
   const fixedNames = new Set(S.categories.filter(c => c.fixed).map(c => c.name));
   let expenses = 0, variable = 0;
@@ -79,11 +79,18 @@ function calc(k) {
     expenses += t;
     if (!fixedNames.has(name)) variable += t;
   }
-  const plan = (m.plan || []).map(g => ({ ...g, amount: round2(income * (Number(g.pct) || 0) / 100), done: !!m.done[g.id] }));
+  // a goal's target is a fixed amount for the month: a % of income, or a flat $ amount
+  const plan = (m.plan || []).map(g => {
+    const amount = g.mode === 'amt' ? round2(Number(g.amt) || 0) : round2(income * (Number(g.pct) || 0) / 100);
+    const deps = (m.deposits && m.deposits[g.id]) || [];
+    const legacy = !deps.length && m.done && m.done[g.id];            // months saved before deposits existed
+    const moved = deps.length ? round2(sum(deps)) : (legacy ? amount : 0);
+    return { ...g, amount, deps, moved, remaining: Math.max(0, round2(amount - moved)), done: amount > 0 && moved >= amount - 0.005 };
+  });
   const planned = plan.reduce((a, g) => a + g.amount, 0);
-  const pctTotal = plan.reduce((a, g) => a + (Number(g.pct) || 0), 0);
-  const saved = plan.filter(g => g.done).reduce((a, g) => a + g.amount, 0);
-  return { income, expenses, variable, balance: income - expenses, plan, planned, pctTotal, saved, afterSavings: income - expenses - planned };
+  const pctTotal = income > 0 ? Math.round(planned / income * 1000) / 10 : 0;
+  const saved = plan.reduce((a, g) => a + g.moved, 0);
+  return { income, expenses, variable, balance: income - expenses, plan, planned, pctTotal, saved, toMove: Math.max(0, round2(planned - saved)), afterSavings: income - expenses - planned };
 }
 
 /* ---------- ui state ---------- */
@@ -100,8 +107,8 @@ function reminderState(now = new Date()) {
   const c = calc(k);
   const pending = c.plan.filter(g => !g.done);
   if (!S.goals.length && !(m && m.plan.length)) return null;
-  if (day >= last - 2 && pending.length) return { id: `${k}-end`, k, kind: 'end', title: 'End-of-month savings', body: `Time to move your savings: ${pending.map(g => `${g.name} ${money(g.amount)}`).join(', ')}.` };
-  if (day >= (S.settings.midDay || 15) && pending.length) return { id: `${k}-mid`, k, kind: 'mid', title: 'Mid-month savings check-in', body: `${c.plan.length - pending.length}/${c.plan.length} savings moved so far. Pending: ${pending.map(g => `${g.name} ${money(g.amount)}`).join(', ')}.` };
+  if (day >= last - 2 && pending.length) return { id: `${k}-end`, k, kind: 'end', title: 'End-of-month savings', body: `Time to move your savings: ${pending.map(g => `${g.name} ${money(g.remaining)} left`).join(', ')}.` };
+  if (day >= (S.settings.midDay || 15) && pending.length) return { id: `${k}-mid`, k, kind: 'mid', title: 'Mid-month savings check-in', body: `${c.plan.length - pending.length}/${c.plan.length} savings moved so far. Still to move: ${pending.map(g => `${g.name} ${money(g.remaining)}`).join(', ')}.` };
   return null;
 }
 async function maybeNotify() {
@@ -132,7 +139,7 @@ const synced = { config: '', months: {} };
 let screen = 'app', authMode = 'signin', msg = '';
 
 function isPristine(m) {
-  return !Object.values(m.income || {}).some(l => l.length) && !(m.done && Object.values(m.done).some(Boolean)) &&
+  return !Object.values(m.income || {}).some(l => l.length) && !(m.done && Object.values(m.done).some(Boolean)) && !(m.deposits && Object.values(m.deposits).some(l => l.length)) &&
     Object.values(m.expenses || {}).every(l => l.every(e => e.note === 'Recurring'));
 }
 const configOf = () => ({ sources: S.sources, categories: S.categories, goals: S.goals, accounts: S.accounts, currency: S.settings.currency, midDay: S.settings.midDay });
@@ -362,32 +369,51 @@ function acctOptions(selected) {
   const list = S.accounts.includes(selected) || !selected ? S.accounts : [...S.accounts, selected];
   return `<option value="">Choose account</option>` + list.map(a => `<option value="${esc(a)}" ${a === selected ? 'selected' : ''}>${esc(a)}</option>`).join('');
 }
+const shortDate = d => { try { return new Date(d + 'T00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return ''; } };
+function goalCard(g) {
+  const pct = g.amount > 0 ? Math.min(100, g.moved / g.amount * 100) : 0;
+  const over = g.moved > g.amount + 0.005 ? round2(g.moved - g.amount) : 0;
+  const isAmt = g.mode === 'amt';
+  const deps = g.deps.map(d => `<div class="dep"><span class="dep-main"><b>${esc(d.account || 'No account')}</b>${d.date ? `<small>${shortDate(d.date)}</small>` : ''}</span>
+    <span class="amt">${money(d.amt)}</span>${iconBtn('dep-del', 'x', 'Delete deposit', `data-goal="${g.id}" data-id="${d.id}"`)}</div>`).join('');
+  return `<article class="goal ${g.done ? 'done' : ''}">
+    <div class="goal-head"><input type="text" value="${esc(g.name)}" data-act="goal-name" data-id="${g.id}" aria-label="Goal name">
+      <b class="goal-amt">${money(g.amount)}</b>${iconBtn('goal-del', 'x', 'Remove goal', `data-id="${g.id}"`)}</div>
+    <div class="target"><span>Monthly target</span>
+      <input type="number" min="0" step="${isAmt ? 10 : 0.5}" value="${isAmt ? g.amt : g.pct}" data-act="goal-val" data-id="${g.id}" aria-label="Target value">
+      <select data-act="goal-mode" data-id="${g.id}" aria-label="Target type"><option value="pct" ${isAmt ? '' : 'selected'}>% of income</option><option value="amt" ${isAmt ? 'selected' : ''}>Fixed $</option></select></div>
+    <div class="prog"><div class="track"><i style="width:${pct}%"></i></div>
+      <div class="prog-l"><span><b>${money(g.moved)}</b> of ${money(g.amount)}</span>
+        <span class="${g.done ? 'ok' : ''}">${g.done ? (over ? `Done, ${money(over)} over` : 'Done') : `${money(g.remaining)} left`}</span></div></div>
+    ${deps ? `<div class="deps">${deps}</div>` : ''}
+    <form class="depform" data-act="dep-add" data-id="${g.id}">
+      <div class="inline"><input type="number" min="0" step="0.01" inputmode="decimal" placeholder="Deposit" required aria-label="Deposit amount">
+        <select class="unit" aria-label="Amount type"><option value="amt">$</option><option value="pct">% of target</option></select></div>
+      <div class="inline"><select required aria-label="Account for this deposit">${acctOptions(g.account || '')}</select><button class="btn primary">Add</button></div>
+      ${g.remaining > 0 ? `<button type="button" class="btn ghost sm fill" data-act="dep-fill" data-left="${g.remaining}">Fill remaining ${money(g.remaining)}</button>` : ''}
+    </form></article>`;
+}
 function viewSavings() {
   const m = ensureMonth(cur), c = calc(cur);
-  const goals = c.plan.map(g => `<article class="goal">
-    <div class="goal-top"><input type="text" value="${esc(g.name)}" data-act="goal-name" data-id="${g.id}" aria-label="Goal name">
-      <label class="pct"><input type="number" min="0" max="100" step="0.5" value="${g.pct}" data-act="goal-pct" data-id="${g.id}" aria-label="Percent of income"><span>%</span></label>
-      ${iconBtn('goal-del', 'x', 'Remove goal', `data-id="${g.id}"`)}</div>
-    <label class="acct"><span>Account</span><select data-act="goal-account" data-id="${g.id}" aria-label="Account for ${esc(g.name)}">${acctOptions(g.account || '')}</select></label>
-    <div class="goal-bot"><b class="num-md">${money(g.amount)}</b>
-      <label class="moved"><input type="checkbox" data-act="goal-done" data-id="${g.id}" ${g.done ? 'checked' : ''}><span>Moved to savings</span></label></div></article>`).join('');
+  const goals = c.plan.map(goalCard).join('');
   const byAcct = {};
-  c.plan.forEach(g => { if (g.amount) { const k = g.account || 'No account yet'; byAcct[k] = (byAcct[k] || 0) + g.amount; } });
+  c.plan.forEach(g => g.deps.forEach(d => { const k = d.account || 'No account'; byAcct[k] = (byAcct[k] || 0) + (Number(d.amt) || 0); }));
   const accts = Object.entries(byAcct);
-  const warns = (c.pctTotal > 100 ? '<p class="warn">Your goals add up to more than 100% of income.</p>' : '') +
-    (c.afterSavings < 0 && c.income > 0 ? '<p class="warn">Expenses plus savings are more than this month\'s income.</p>' : '');
+  const warns = (c.income > 0 && c.planned > c.income ? '<p class="warn">Your savings targets are more than this month\'s income.</p>' : '') +
+    (c.afterSavings < 0 && c.income > 0 && c.planned <= c.income ? '<p class="warn">Expenses plus savings are more than this month\'s income.</p>' : '');
   return `${monthNav(monthName(cur))}
   <section class="hero"><div class="label">Planned savings</div><div class="big">${money(c.planned)}</div>
     <div class="sub">${c.pctTotal}% of ${money(c.income)} income</div>
-    <div class="stats two">${stat('Moved so far', money(c.saved))}${stat('Left after savings', money(c.afterSavings), tone(c.afterSavings))}</div></section>
-  <div class="sec-head"><h2>Savings plan</h2></div>${warns}
+    <div class="stats">${stat('Moved so far', money(c.saved))}${stat('Still to move', money(c.toMove))}${stat('Left after savings', money(c.afterSavings), tone(c.afterSavings))}</div></section>
+  <div class="sec-head"><h2>Savings goals</h2></div>${warns}
   <div class="goal-list">${goals || '<div class="group empty">No goals yet. Add one below.</div>'}</div>
   <form class="group pad stack addgoal" data-act="goal-add"><b>New goal</b>
-    <input type="text" placeholder="Name, like Vacation" required aria-label="Goal name">
-    <div class="inline"><input type="number" min="0" max="100" step="0.5" placeholder="% of income" required aria-label="Percent of income"><select aria-label="Account">${acctOptions('')}</select></div>
+    <input type="text" placeholder="Name, like Home down payment" required aria-label="Goal name">
+    <div class="inline"><input type="number" min="0" step="0.5" placeholder="Target" required aria-label="Monthly target">
+      <select aria-label="Target type"><option value="pct">% of income</option><option value="amt">Fixed $</option></select></div>
     <button class="btn primary">Add goal</button></form>
-  ${accts.length ? `<div class="sec-head"><h2>Where it goes</h2></div><div class="group">${accts.map(([k, v]) => `<div class="line"><span>${esc(k)}</span><b class="num-md">${money(v)}</b></div>`).join('')}</div>` : ''}
-  <p class="note">An account you pick becomes the default for next month. Past months keep their own plan.</p>`;
+  ${accts.length ? `<div class="sec-head"><h2>Where it went</h2></div><div class="group">${accts.map(([k, v]) => `<div class="line"><span>${esc(k)}</span><b class="num-md">${money(v)}</b></div>`).join('')}</div>` : ''}
+  <p class="note">Log each deposit as you make it, as a dollar amount or a share of the target. The account you use becomes the default next month.</p>`;
 }
 function viewHistory() {
   const keys = Object.keys(S.months).filter(k => !isPristine(S.months[k])).sort().reverse();
@@ -527,7 +553,7 @@ function importPanel() {
     <p class="note">Each line is <code>month,type,category,amount</code>, like <code>2024-11,expense,Grocery,420.50</code>. Lines with only <code>category,amount</code> go into the month picked above, and are counted as income when the name is one of your people.</p>${review}`;
 }
 function findGoal(id) { return ensureMonth(cur).plan.find(g => g.id === id); }
-function syncTemplate(g) { const t = S.goals.find(x => x.id === g.id); if (t) { t.name = g.name; t.pct = g.pct; t.account = g.account || ''; } } // the template is what new months start from
+function syncTemplate(g) { const t = S.goals.find(x => x.id === g.id); if (t) { t.name = g.name; t.mode = g.mode || 'pct'; t.pct = g.pct; t.amt = g.amt || 0; t.account = g.account || ''; } } // the template is what new months start from
 
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act],[data-tab]'); if (!t) return;
@@ -539,7 +565,11 @@ document.addEventListener('click', e => {
     case 'goto': cur = t.dataset.key; tab = 'month'; break;
     case 'toggle': open.has(t.dataset.key) ? open.delete(t.dataset.key) : open.add(t.dataset.key); break;
     case 'del': { const d = m[t.dataset.kind === 'i' ? 'income' : 'expenses']; d[t.dataset.name] = d[t.dataset.name].filter(x => x.id !== t.dataset.id); save(); break; }
-    case 'goal-del': { m.plan = m.plan.filter(g => g.id !== t.dataset.id); S.goals = S.goals.filter(g => g.id !== t.dataset.id); save(); break; }
+    case 'goal-del': { const id = t.dataset.id, n = ((m.deposits || {})[id] || []).length;
+      if (n && !confirm(`This goal has ${n} deposit${n === 1 ? '' : 's'} logged this month. Remove it anyway?`)) return;
+      m.plan = m.plan.filter(g => g.id !== id); if (m.deposits) delete m.deposits[id]; S.goals = S.goals.filter(g => g.id !== id); save(); break; }
+    case 'dep-del': { const l = m.deposits[t.dataset.goal]; m.deposits[t.dataset.goal] = l.filter(d => d.id !== t.dataset.id); save(); break; }
+    case 'dep-fill': { const f = t.closest('form'); f.querySelector('input').value = t.dataset.left; f.querySelector('select.unit').value = 'amt'; f.querySelector('input').focus(); return; }
     case 'theme': S.settings.theme = t.dataset.v; applyTheme(); save(); break;
     case 'acc-del': S.accounts.splice(+t.dataset.i, 1); save(); break;
     case 'cat-del': S.categories.splice(+t.dataset.i, 1); save(); break;
@@ -608,7 +638,14 @@ document.addEventListener('submit', e => {
       const d = ensureMonth(cur)[f.dataset.kind === 'i' ? 'income' : 'expenses'];
       (d[f.dataset.name] = d[f.dataset.name] || []).push({ id: uid(), amt: parseFloat(v1), note: v2.trim() }); break;
     }
-    case 'goal-add': { const g = { id: uid(), name: v1.trim(), pct: parseFloat(v2) || 0, account: (f.querySelector('select') || {}).value || '' }; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); break; }
+    case 'dep-add': { const mo = ensureMonth(cur), g = findGoal(f.dataset.id); if (!g) return;
+      const [unit, acct] = f.querySelectorAll('select'); const target = calc(cur).plan.find(x => x.id === g.id).amount;
+      const val = parseFloat(v1); if (!(val > 0)) return;
+      const amt = round2(unit.value === 'pct' ? target * val / 100 : val);
+      const today = new Date(), inMonth = keyOf(today) === cur;
+      mo.deposits = mo.deposits || {}; (mo.deposits[g.id] = mo.deposits[g.id] || []).push({ id: uid(), amt, account: acct.value, date: inMonth ? `${keyOf(today)}-${pad(today.getDate())}` : '' });
+      g.account = acct.value; syncTemplate(g); break; }
+    case 'goal-add': { const g = { id: uid(), name: v1.trim(), mode: f.querySelector('select').value, pct: 0, amt: 0, account: '' }; g[g.mode === 'amt' ? 'amt' : 'pct'] = parseFloat(v2) || 0; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); break; }
     case 'acc-add': { const n = v1.trim(); if (n && !S.accounts.includes(n)) S.accounts.push(n); break; }
     case 'cat-add': S.categories.push({ name: v1.trim() }); break;
     case 'src-add': S.sources.push(v1.trim()); break;
@@ -620,13 +657,15 @@ document.addEventListener('change', e => {
   const i = +t.dataset.i;
   switch (a) {
     case 'goal-name': { const g = findGoal(t.dataset.id); g.name = t.value; syncTemplate(g); break; }
-    case 'goal-pct': { const g = findGoal(t.dataset.id); g.pct = Math.max(0, parseFloat(t.value) || 0); syncTemplate(g); break; }
-    case 'goal-done': ensureMonth(cur).done[t.dataset.id] = t.checked; break;
-    case 'goal-account': { const g = findGoal(t.dataset.id); g.account = t.value; syncTemplate(g); break; }
+    case 'goal-val': { const g = findGoal(t.dataset.id), v = Math.max(0, parseFloat(t.value) || 0); g[g.mode === 'amt' ? 'amt' : 'pct'] = v; syncTemplate(g); break; }
+    case 'goal-mode': { const g = findGoal(t.dataset.id), c = calc(cur), now = c.plan.find(x => x.id === g.id).amount;   // keep today's amount when switching type
+      if (t.value === 'amt') g.amt = now; else g.pct = c.income > 0 ? Math.round(now / c.income * 1000) / 10 : g.pct;
+      g.mode = t.value; syncTemplate(g); break; }
     case 'acc-name': { const old = S.accounts[i], nv = t.value.trim();
       if (nv && nv !== old && !S.accounts.includes(nv)) { S.accounts[i] = nv;
         S.goals.forEach(g => { if (g.account === old) g.account = nv; });
-        Object.values(S.months).forEach(mo => (mo.plan || []).forEach(g => { if (g.account === old) g.account = nv; })); } break; }
+        Object.values(S.months).forEach(mo => { (mo.plan || []).forEach(g => { if (g.account === old) g.account = nv; });
+          Object.values(mo.deposits || {}).forEach(l => l.forEach(d => { if (d.account === old) d.account = nv; })); }); } break; }
     case 'cat-name': S.categories[i].name = t.value.trim() || S.categories[i].name; break;
     case 'cat-fixed': S.categories[i].fixed = t.checked; break;
     case 'cat-auto': S.categories[i].auto = parseFloat(t.value) || 0; break;
