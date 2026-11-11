@@ -15,7 +15,8 @@ function defaultState() {
       { name: 'Entertainment' }, { name: 'Eat out' }, { name: 'Clothing' },
       { name: 'Home Appliance' }, { name: 'Other' },
     ],
-    goals: [{ id: uid(), name: 'Home saving', pct: 17 }], // template for new months
+    accounts: ['Savings account', 'TFSA', 'RRSP', 'Bitcoin'], // where savings can go; edited in Settings
+    goals: [{ id: uid(), name: 'Home saving', pct: 17, account: '' }], // template for new months
     months: {},
     notified: {},
   };
@@ -124,12 +125,13 @@ function isPristine(m) {
   return !Object.values(m.income || {}).some(l => l.length) && !(m.done && Object.values(m.done).some(Boolean)) &&
     Object.values(m.expenses || {}).every(l => l.every(e => e.note === 'Recurring'));
 }
-const configOf = () => ({ sources: S.sources, categories: S.categories, goals: S.goals, currency: S.settings.currency, midDay: S.settings.midDay });
+const configOf = () => ({ sources: S.sources, categories: S.categories, goals: S.goals, accounts: S.accounts, currency: S.settings.currency, midDay: S.settings.midDay });
 function applyConfig(c) {
   if (!c || typeof c !== 'object') return;
   if (c.sources) S.sources = c.sources;
   if (c.categories) S.categories = c.categories;
   if (c.goals) S.goals = c.goals;
+  if (c.accounts) S.accounts = c.accounts;
   if (c.currency) S.settings.currency = c.currency;
   if (c.midDay) S.settings.midDay = c.midDay;
 }
@@ -346,15 +348,22 @@ function viewMonth() {
   ${section('i', S.sources, m, 'Income')}
   ${section('e', S.categories, m, 'Expenses')}`;
 }
+function acctOptions(selected) {
+  const list = S.accounts.includes(selected) || !selected ? S.accounts : [...S.accounts, selected];
+  return `<option value="">Choose account</option>` + list.map(a => `<option value="${esc(a)}" ${a === selected ? 'selected' : ''}>${esc(a)}</option>`).join('');
+}
 function viewSavings() {
   const m = ensureMonth(cur), c = calc(cur);
-  const goals = c.plan.map(g => `<div class="goal">
+  const goals = c.plan.map(g => `<article class="goal">
     <div class="goal-top"><input type="text" value="${esc(g.name)}" data-act="goal-name" data-id="${g.id}" aria-label="Goal name">
       <label class="pct"><input type="number" min="0" max="100" step="0.5" value="${g.pct}" data-act="goal-pct" data-id="${g.id}" aria-label="Percent of income"><span>%</span></label>
       ${iconBtn('goal-del', 'x', 'Remove goal', `data-id="${g.id}"`)}</div>
-    <div class="track"><i style="width:${Math.min(100, g.pct)}%"></i></div>
+    <label class="acct"><span>Account</span><select data-act="goal-account" data-id="${g.id}" aria-label="Account for ${esc(g.name)}">${acctOptions(g.account || '')}</select></label>
     <div class="goal-bot"><b class="num-md">${money(g.amount)}</b>
-      <label class="moved"><input type="checkbox" data-act="goal-done" data-id="${g.id}" ${g.done ? 'checked' : ''}><span>Moved to savings</span></label></div></div>`).join('');
+      <label class="moved"><input type="checkbox" data-act="goal-done" data-id="${g.id}" ${g.done ? 'checked' : ''}><span>Moved to savings</span></label></div></article>`).join('');
+  const byAcct = {};
+  c.plan.forEach(g => { if (g.amount) { const k = g.account || 'No account yet'; byAcct[k] = (byAcct[k] || 0) + g.amount; } });
+  const accts = Object.entries(byAcct);
   const warns = (c.pctTotal > 100 ? '<p class="warn">Your goals add up to more than 100% of income.</p>' : '') +
     (c.afterSavings < 0 && c.income > 0 ? '<p class="warn">Expenses plus savings are more than this month\'s income.</p>' : '');
   return `${monthNav(monthName(cur))}
@@ -362,10 +371,13 @@ function viewSavings() {
     <div class="sub">${c.pctTotal}% of ${money(c.income)} income</div>
     <div class="stats two">${stat('Moved so far', money(c.saved))}${stat('Left after savings', money(c.afterSavings), tone(c.afterSavings))}</div></section>
   <div class="sec-head"><h2>Savings plan</h2></div>${warns}
-  <div class="group">${goals || '<div class="empty">No goals yet. Add one below.</div>'}</div>
-  <form class="inline addgoal" data-act="goal-add"><input type="text" placeholder="New goal" required>
-    <input type="number" min="0" max="100" step="0.5" placeholder="%" class="narrow" required><button class="btn primary">Add goal</button></form>
-  <p class="note">Changes apply to ${monthName(cur)} and to new months. Past months keep their own plan.</p>`;
+  <div class="goal-list">${goals || '<div class="group empty">No goals yet. Add one below.</div>'}</div>
+  <form class="group pad stack addgoal" data-act="goal-add"><b>New goal</b>
+    <input type="text" placeholder="Name, like Vacation" required aria-label="Goal name">
+    <div class="inline"><input type="number" min="0" max="100" step="0.5" placeholder="% of income" required aria-label="Percent of income"><select aria-label="Account">${acctOptions('')}</select></div>
+    <button class="btn primary">Add goal</button></form>
+  ${accts.length ? `<div class="sec-head"><h2>Where it goes</h2></div><div class="group">${accts.map(([k, v]) => `<div class="line"><span>${esc(k)}</span><b class="num-md">${money(v)}</b></div>`).join('')}</div>` : ''}
+  <p class="note">An account you pick becomes the default for next month. Past months keep their own plan.</p>`;
 }
 function viewHistory() {
   const keys = Object.keys(S.months).filter(k => !isPristine(S.months[k])).sort().reverse();
@@ -388,6 +400,8 @@ function viewSettings() {
     ${iconBtn('cat-del', 'x', 'Remove category', `data-i="${i}"`)}</div>`).join('');
   const srcs = S.sources.map((s, i) => `<div class="line edit">${avatar(s, i)}<input type="text" value="${esc(s)}" data-act="src-name" data-i="${i}" aria-label="Name">
     ${iconBtn('src-del', 'x', 'Remove source', `data-i="${i}"`)}</div>`).join('');
+  const accs = S.accounts.map((a, i) => `<div class="line edit"><input type="text" value="${esc(a)}" data-act="acc-name" data-i="${i}" aria-label="Account name">
+    ${iconBtn('acc-del', 'x', 'Remove account', `data-i="${i}"`)}</div>`).join('');
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   return `<header class="monthnav plain"><h1>Settings</h1></header>
   ${accountSection()}
@@ -400,6 +414,9 @@ function viewSettings() {
   <h2>Currency</h2><div class="group"><div class="line"><span>Symbol</span><input type="text" class="narrow" value="${esc(S.settings.currency)}" data-act="currency"></div></div>
   <h2>People</h2><div class="group">${srcs}</div>
   <form class="inline" data-act="src-add"><input type="text" placeholder="Add a person or source" required><button class="btn">${ic('plus')}Add</button></form>
+  <h2>Savings accounts</h2><div class="group">${accs}</div>
+  <form class="inline" data-act="acc-add"><input type="text" placeholder="Add an account, like RESP" required><button class="btn">${ic('plus')}Add</button></form>
+  <p class="note">These show up as choices on each savings goal.</p>
   <h2>Expense categories</h2><div class="group">${cats}</div>
   <form class="inline" data-act="cat-add"><input type="text" placeholder="Add a category" required><button class="btn">${ic('plus')}Add</button></form>
   <p class="note">Fixed categories, like rent, are left out of "Spent, no fixed". Give one an amount to add it to every new month.</p>
@@ -498,7 +515,7 @@ function importPanel() {
     <p class="note">Each line is <code>month,type,category,amount</code>, like <code>2024-11,expense,Grocery,420.50</code>. Lines with only <code>category,amount</code> go into the month picked above, and are counted as income when the name is one of your people.</p>${review}`;
 }
 function findGoal(id) { return ensureMonth(cur).plan.find(g => g.id === id); }
-function syncTemplate(g) { const t = S.goals.find(x => x.id === g.id); if (t) { t.name = g.name; t.pct = g.pct; } }
+function syncTemplate(g) { const t = S.goals.find(x => x.id === g.id); if (t) { t.name = g.name; t.pct = g.pct; t.account = g.account || ''; } } // the template is what new months start from
 
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act],[data-tab]'); if (!t) return;
@@ -511,6 +528,7 @@ document.addEventListener('click', e => {
     case 'toggle': open.has(t.dataset.key) ? open.delete(t.dataset.key) : open.add(t.dataset.key); break;
     case 'del': { const d = m[t.dataset.kind === 'i' ? 'income' : 'expenses']; d[t.dataset.name] = d[t.dataset.name].filter(x => x.id !== t.dataset.id); save(); break; }
     case 'goal-del': { m.plan = m.plan.filter(g => g.id !== t.dataset.id); S.goals = S.goals.filter(g => g.id !== t.dataset.id); save(); break; }
+    case 'acc-del': S.accounts.splice(+t.dataset.i, 1); save(); break;
     case 'cat-del': S.categories.splice(+t.dataset.i, 1); save(); break;
     case 'src-del': S.sources.splice(+t.dataset.i, 1); save(); break;
     case 'signout': signOut(); return;
@@ -577,7 +595,8 @@ document.addEventListener('submit', e => {
       const d = ensureMonth(cur)[f.dataset.kind === 'i' ? 'income' : 'expenses'];
       (d[f.dataset.name] = d[f.dataset.name] || []).push({ id: uid(), amt: parseFloat(v1), note: v2.trim() }); break;
     }
-    case 'goal-add': { const g = { id: uid(), name: v1.trim(), pct: parseFloat(v2) || 0 }; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); break; }
+    case 'goal-add': { const g = { id: uid(), name: v1.trim(), pct: parseFloat(v2) || 0, account: (f.querySelector('select') || {}).value || '' }; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); break; }
+    case 'acc-add': { const n = v1.trim(); if (n && !S.accounts.includes(n)) S.accounts.push(n); break; }
     case 'cat-add': S.categories.push({ name: v1.trim() }); break;
     case 'src-add': S.sources.push(v1.trim()); break;
   }
@@ -590,6 +609,11 @@ document.addEventListener('change', e => {
     case 'goal-name': { const g = findGoal(t.dataset.id); g.name = t.value; syncTemplate(g); break; }
     case 'goal-pct': { const g = findGoal(t.dataset.id); g.pct = Math.max(0, parseFloat(t.value) || 0); syncTemplate(g); break; }
     case 'goal-done': ensureMonth(cur).done[t.dataset.id] = t.checked; break;
+    case 'goal-account': { const g = findGoal(t.dataset.id); g.account = t.value; syncTemplate(g); break; }
+    case 'acc-name': { const old = S.accounts[i], nv = t.value.trim();
+      if (nv && nv !== old && !S.accounts.includes(nv)) { S.accounts[i] = nv;
+        S.goals.forEach(g => { if (g.account === old) g.account = nv; });
+        Object.values(S.months).forEach(mo => (mo.plan || []).forEach(g => { if (g.account === old) g.account = nv; })); } break; }
     case 'cat-name': S.categories[i].name = t.value.trim() || S.categories[i].name; break;
     case 'cat-fixed': S.categories[i].fixed = t.checked; break;
     case 'cat-auto': S.categories[i].auto = parseFloat(t.value) || 0; break;
