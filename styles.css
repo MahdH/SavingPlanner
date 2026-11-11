@@ -224,3 +224,16 @@ select:focus-visible { outline: 0; box-shadow: inset 0 0 0 1.5px var(--ss-accent
 .dep-main { flex: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0; } .dep-main small { color: var(--ss-text-faint); font-size: .75rem; }
 .depform { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .depform .inline { margin-top: 0; } .depform .inline > select { flex: 1; } .depform .fill { align-self: flex-start; }
+
+/* goal cards read as plain text until you tap Edit */
+.goal-id { flex: 1; min-width: 0; }
+.goal-name { font-weight: 600; overflow-wrap: anywhere; }
+.goal-sub { color: var(--ss-text); font-size: .8125rem; margin-top: 1px; }
+.add-dep { margin-top: 12px; padding-left: 6px; }
+.depform .inline .btn { flex: none; }
+.card-title { padding: 14px 14px 6px; font-weight: 600; }
+
+/* bento: cards flow into as many columns as the width allows (one column on a phone) */
+main.wide { max-width: 1040px; }
+.bento { columns: 300px; column-gap: 12px; }
+.bento > * { break-inside: avoid; margin: 0 0 12px; }

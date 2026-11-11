@@ -97,6 +97,8 @@ function calc(k) {
 let tab = 'month';
 let cur = keyOf(new Date());
 const open = new Set();
+const editing = new Set();   // goal cards in edit mode
+const addingDep = new Set(); // goal cards with the deposit form open
 const $app = document.getElementById('app');
 
 /* ---------- reminders ---------- */
@@ -158,6 +160,7 @@ function softRender() {
   if (a && a.closest && a.closest('#app') && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) { setTimeout(softRender, 1500); return; }
   render();
 }
+const renderSoon = () => setTimeout(softRender, 220); // lets a click on Done/Edit land before the card re-renders
 function saveLocal() { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
 
 function schedulePush() {
@@ -283,6 +286,8 @@ const IC = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   bell: '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
   'log-out': '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
 };
 const ic = (n, s = 16) => `<svg class="ic" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
@@ -371,24 +376,28 @@ function acctOptions(selected) {
 }
 const shortDate = d => { try { return new Date(d + 'T00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return ''; } };
 function goalCard(g) {
+  const ed = editing.has(g.id), adding = addingDep.has(g.id);
   const pct = g.amount > 0 ? Math.min(100, g.moved / g.amount * 100) : 0;
   const over = g.moved > g.amount + 0.005 ? round2(g.moved - g.amount) : 0;
   const deps = g.deps.map(d => `<div class="dep"><span class="dep-main"><b>${esc(d.account || 'No account')}</b>${d.date ? `<small>${shortDate(d.date)}</small>` : ''}</span>
-    <span class="amt">${money(d.amt)}</span>${iconBtn('dep-del', 'x', 'Delete deposit', `data-goal="${g.id}" data-id="${d.id}"`)}</div>`).join('');
+    <span class="amt">${money(d.amt)}</span>${ed ? iconBtn('dep-del', 'x', 'Delete deposit', `data-goal="${g.id}" data-id="${d.id}"`) : ''}</div>`).join('');
+  const title = ed ? `<input type="text" value="${esc(g.name)}" data-act="goal-name" data-id="${g.id}" aria-label="Goal name">`
+    : `<div class="goal-id"><div class="goal-name">${esc(g.name)}</div><div class="goal-sub">${g.pct}% of income</div></div>`;
   return `<article class="goal ${g.done ? 'done' : ''}">
-    <div class="goal-head"><input type="text" value="${esc(g.name)}" data-act="goal-name" data-id="${g.id}" aria-label="Goal name">
-      <b class="goal-amt">${money(g.amount)}</b>${iconBtn('goal-del', 'x', 'Remove goal', `data-id="${g.id}"`)}</div>
-    <label class="target"><span>Monthly target</span>
-      <input type="number" min="0" max="100" step="0.5" value="${g.pct}" data-act="goal-val" data-id="${g.id}" aria-label="Percent of income"><em>% of income</em></label>
+    <div class="goal-head">${title}<b class="goal-amt">${money(g.amount)}</b>
+      ${iconBtn('goal-edit', ed ? 'check' : 'pencil', ed ? 'Done editing' : 'Edit goal', `data-id="${g.id}"`)}${iconBtn('goal-del', 'x', 'Remove goal', `data-id="${g.id}"`)}</div>
+    ${ed ? `<label class="target"><span>Monthly target</span>
+      <input type="number" min="0" max="100" step="0.5" value="${g.pct}" data-act="goal-val" data-id="${g.id}" aria-label="Percent of income"><em>% of income</em></label>` : ''}
     <div class="prog"><div class="track"><i style="width:${pct}%"></i></div>
       <div class="prog-l"><span><b>${money(g.moved)}</b> of ${money(g.amount)}</span>
         <span class="${g.done ? 'ok' : ''}">${g.done ? (over ? `Done, ${money(over)} over` : 'Done') : `${money(g.remaining)} left`}</span></div></div>
     ${deps ? `<div class="deps">${deps}</div>` : ''}
-    <form class="depform" data-act="dep-add" data-id="${g.id}">
+    ${adding ? `<form class="depform" data-act="dep-add" data-id="${g.id}">
       <input type="number" min="0" step="0.01" inputmode="decimal" placeholder="Deposit amount" required aria-label="Deposit amount">
-      <div class="inline"><select required aria-label="Account for this deposit">${acctOptions(g.account || '')}</select><button class="btn primary">Add</button></div>
+      <div class="inline"><select required aria-label="Account for this deposit">${acctOptions(g.account || '')}</select><button class="btn primary">Add</button><button type="button" class="btn ghost" data-act="dep-cancel" data-id="${g.id}">Cancel</button></div>
       ${g.remaining > 0 ? `<button type="button" class="btn ghost sm fill" data-act="dep-fill" data-left="${g.remaining}">Fill remaining ${money(g.remaining)}</button>` : ''}
-    </form></article>`;
+    </form>` : `<button class="btn ghost sm add-dep" data-act="dep-open" data-id="${g.id}">${ic('plus', 14)}Add deposit</button>`}
+  </article>`;
 }
 function viewSavings() {
   const m = ensureMonth(cur), c = calc(cur);
@@ -403,12 +412,13 @@ function viewSavings() {
     <div class="sub">${c.pctTotal}% of ${money(c.income)} income</div>
     <div class="stats">${stat('Moved so far', money(c.saved))}${stat('Still to move', money(c.toMove))}${stat('Left after savings', money(c.afterSavings), tone(c.afterSavings))}</div></section>
   <div class="sec-head"><h2>Savings goals</h2></div>${warns}
-  <div class="goal-list">${goals || '<div class="group empty">No goals yet. Add one below.</div>'}</div>
+  <div class="bento">${goals}
   <form class="group pad stack addgoal" data-act="goal-add"><b>New goal</b>
     <input type="text" placeholder="Name, like Home down payment" required aria-label="Goal name">
     <input type="number" min="0" max="100" step="0.5" placeholder="Monthly target, % of income" required aria-label="Monthly target, percent of income">
     <button class="btn primary">Add goal</button></form>
-  ${accts.length ? `<div class="sec-head"><h2>Where it went</h2></div><div class="group">${accts.map(([k, v]) => `<div class="line"><span>${esc(k)}</span><b class="num-md">${money(v)}</b></div>`).join('')}</div>` : ''}
+  ${accts.length ? `<section class="group"><div class="card-title">Where it went</div>${accts.map(([k, v]) => `<div class="line"><span>${esc(k)}</span><b class="num-md">${money(v)}</b></div>`).join('')}</section>` : ''}
+  </div>
   <p class="note">Log each deposit as you make it. The account you use becomes the default next month.</p>`;
 }
 function viewHistory() {
@@ -467,6 +477,7 @@ const views = { month: viewMonth, savings: viewSavings, history: viewHistory, se
 const screens = { setup: viewSetup, auth: viewAuth, household: viewHousehold, loading: () => '' };
 function render() {
   $app.innerHTML = screen === 'app' ? views[tab]() : screens[screen]();
+  $app.classList.toggle('wide', screen === 'app' && tab === 'savings');
   document.getElementById('tabs').hidden = screen !== 'app';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
 }
@@ -563,7 +574,10 @@ document.addEventListener('click', e => {
     case 'del': { const d = m[t.dataset.kind === 'i' ? 'income' : 'expenses']; d[t.dataset.name] = d[t.dataset.name].filter(x => x.id !== t.dataset.id); save(); break; }
     case 'goal-del': { const id = t.dataset.id, n = ((m.deposits || {})[id] || []).length;
       if (n && !confirm(`This goal has ${n} deposit${n === 1 ? '' : 's'} logged this month. Remove it anyway?`)) return;
-      m.plan = m.plan.filter(g => g.id !== id); if (m.deposits) delete m.deposits[id]; S.goals = S.goals.filter(g => g.id !== id); save(); break; }
+      editing.delete(id); addingDep.delete(id); m.plan = m.plan.filter(g => g.id !== id); if (m.deposits) delete m.deposits[id]; S.goals = S.goals.filter(g => g.id !== id); save(); break; }
+    case 'goal-edit': editing.has(t.dataset.id) ? editing.delete(t.dataset.id) : editing.add(t.dataset.id); break;
+    case 'dep-open': addingDep.add(t.dataset.id); setTimeout(() => { const i = document.querySelector(`form.depform[data-id="${t.dataset.id}"] input`); if (i) i.focus(); }, 0); break;
+    case 'dep-cancel': addingDep.delete(t.dataset.id); break;
     case 'dep-del': { const l = m.deposits[t.dataset.goal]; m.deposits[t.dataset.goal] = l.filter(d => d.id !== t.dataset.id); save(); break; }
     case 'dep-fill': { const f = t.closest('form'); f.querySelector('input').value = t.dataset.left; f.querySelector('input').focus(); return; }
     case 'theme': S.settings.theme = t.dataset.v; applyTheme(); save(); break;
@@ -638,7 +652,7 @@ document.addEventListener('submit', e => {
       const amt = round2(parseFloat(v1)); if (!(amt > 0)) return;
       const acct = f.querySelector('select').value, today = new Date(), inMonth = keyOf(today) === cur;
       mo.deposits = mo.deposits || {}; (mo.deposits[g.id] = mo.deposits[g.id] || []).push({ id: uid(), amt, account: acct, date: inMonth ? `${keyOf(today)}-${pad(today.getDate())}` : '' });
-      g.account = acct; syncTemplate(g); break; }
+      g.account = acct; syncTemplate(g); addingDep.delete(g.id); break; }
     case 'goal-add': { const g = { id: uid(), name: v1.trim(), pct: Math.max(0, parseFloat(v2) || 0), account: '' }; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); break; }
     case 'acc-add': { const n = v1.trim(); if (n && !S.accounts.includes(n)) S.accounts.push(n); break; }
     case 'cat-add': S.categories.push({ name: v1.trim() }); break;
@@ -650,8 +664,8 @@ document.addEventListener('change', e => {
   const t = e.target, a = t.dataset.act; if (!a) return;
   const i = +t.dataset.i;
   switch (a) {
-    case 'goal-name': { const g = findGoal(t.dataset.id); g.name = t.value; syncTemplate(g); break; }
-    case 'goal-val': { const g = findGoal(t.dataset.id); g.pct = Math.max(0, parseFloat(t.value) || 0); syncTemplate(g); break; }
+    case 'goal-name': { const g = findGoal(t.dataset.id); g.name = t.value; syncTemplate(g); save(); renderSoon(); return; }
+    case 'goal-val': { const g = findGoal(t.dataset.id); g.pct = Math.max(0, parseFloat(t.value) || 0); syncTemplate(g); save(); renderSoon(); return; }
     case 'acc-name': { const old = S.accounts[i], nv = t.value.trim();
       if (nv && nv !== old && !S.accounts.includes(nv)) { S.accounts[i] = nv;
         S.goals.forEach(g => { if (g.account === old) g.account = nv; });
