@@ -32,6 +32,16 @@
     <button data-tab="history"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg><span>History</span></button>
     <button data-tab="settings"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg><span>Settings</span></button>
   </nav>
+  <dialog id="goalDialog" aria-labelledby="goalDialogTitle">
+    <form data-act="goal-add" class="sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-head"><h2 id="goalDialogTitle">New goal</h2>
+        <button type="button" class="icon-btn" data-act="goal-modal-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
+      <label class="sheet-field"><span>Name</span><input type="text" placeholder="Home down payment" required autocomplete="off" autofocus></label>
+      <label class="sheet-field"><span>Monthly target</span><span class="suffix"><input type="number" min="0" max="100" step="0.5" inputmode="decimal" placeholder="17" required><em>% of income</em></span></label>
+      <div class="btnrow"><button class="btn primary">Add goal</button><button type="button" class="btn ghost" data-act="goal-modal-close">Cancel</button></div>
+    </form>
+  </dialog>
   <script src="config.js"></script>
   <script src="vendor/supabase.js"></script>
   <script src="app.js"></script>

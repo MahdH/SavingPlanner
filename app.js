@@ -177,6 +177,11 @@ function softRender() {
   if (a && a.closest && a.closest('#app') && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) { setTimeout(softRender, 1500); return; }
   render();
 }
+/* ---------- Add goal dialog: centred modal on desktop, bottom sheet on phones (see styles.css) ---------- */
+function openGoalDialog() { const d = document.getElementById('goalDialog'); if (d && !d.open) { d.showModal(); const i = d.querySelector('input'); if (i) i.focus(); } }
+function closeGoalDialog() { const d = document.getElementById('goalDialog'); if (d && d.open) d.close(); }
+document.getElementById('goalDialog').addEventListener('close', e => e.target.querySelector('form').reset());
+document.getElementById('goalDialog').addEventListener('click', e => { if (e.target === e.currentTarget) closeGoalDialog(); });   // tap the dimmed backdrop to dismiss
 const renderSoon = () => setTimeout(softRender, 220); // lets a click on Done/Edit land before the card re-renders
 function saveLocal() { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
 
@@ -420,11 +425,11 @@ function goalCard(g) {
       <div class="prog-l"><span><b>${money(g.moved)}</b> of ${money(g.amount)}</span>
         <span class="${g.done ? 'ok' : ''}">${g.done ? (over ? `Done, ${money(over)} over` : 'Done') : `${money(g.remaining)} left`}</span></div></div>
     ${deps ? `<div class="deps">${deps}</div>` : ''}
-    ${adding ? `<form class="depform" data-act="dep-add" data-id="${g.id}">
+    <div class="goal-foot">${adding ? `<form class="depform" data-act="dep-add" data-id="${g.id}">
       <input type="number" min="0" step="0.01" inputmode="decimal" placeholder="Deposit amount" required aria-label="Deposit amount">
       <div class="inline"><select required aria-label="Account for this deposit">${acctOptions(g.account || '')}</select><button class="btn primary">Add</button><button type="button" class="btn ghost" data-act="dep-cancel" data-id="${g.id}">Cancel</button></div>
       ${g.remaining > 0 ? `<button type="button" class="btn ghost sm fill" data-act="dep-fill" data-left="${g.remaining}">Fill remaining ${money(g.remaining)}</button>` : ''}
-    </form>` : `<button class="btn ghost sm add-dep" data-act="dep-open" data-id="${g.id}">${ic('plus', 14)}Add deposit</button>`}
+    </form>` : `<button class="btn ghost sm add-dep" data-act="dep-open" data-id="${g.id}">${ic('plus', 14)}Add deposit</button>`}</div>
   </article>`;
 }
 function viewSavings() {
@@ -439,13 +444,9 @@ function viewSavings() {
   <section class="hero"><div class="label">Planned savings</div><div class="big">${money(c.planned)}</div>
     <div class="sub">${c.pctTotal}% of ${money(c.income)} income</div>
     <div class="stats">${stat('Moved so far', money(c.saved))}${stat('Still to move', money(c.toMove))}${stat('Left after savings', money(c.afterSavings), tone(c.afterSavings))}</div></section>
-  <div class="sec-head"><h2>Savings goals</h2></div>${warns}
-  <div class="bento">${goals}
-  <form class="group pad stack addgoal" data-act="goal-add"><b>New goal</b>
-    <input type="text" placeholder="Name, like Home down payment" required aria-label="Goal name">
-    <input type="number" min="0" max="100" step="0.5" placeholder="Monthly target, % of income" required aria-label="Monthly target, percent of income">
-    <button class="btn primary">Add goal</button></form>
-  ${accts.length ? `<section class="group"><div class="card-title">Where it went</div>${accts.map(([k, v]) => `<div class="line"><span>${esc(k)}</span><b class="num-md">${money(v)}</b></div>`).join('')}</section>` : ''}
+  <div class="sec-head has-btn"><h2>Savings goals</h2><button class="btn primary sm" data-act="goal-modal-open">${ic('plus', 14)}Add goal</button></div>${warns}
+  <div class="bento">${goals || '<div class="group empty span-all">No goals yet. Tap Add goal to start.</div>'}
+  ${accts.length ? `<section class="group span-all"><div class="card-title">Where it went</div>${accts.map(([k, v]) => `<div class="line"><span>${esc(k)}</span><b class="num-md">${money(v)}</b></div>`).join('')}</section>` : ''}
   </div>
   <p class="note">Log each deposit as you make it. The account you use becomes the default next month.</p>`;
 }
@@ -616,6 +617,8 @@ document.addEventListener('click', e => {
     case 'goal-del': { const id = t.dataset.id, n = ((m.deposits || {})[id] || []).length;
       if (n && !confirm(`This goal has ${n} deposit${n === 1 ? '' : 's'} logged this month. Remove it anyway?`)) return;
       editing.delete(id); addingDep.delete(id); m.plan = m.plan.filter(g => g.id !== id); if (m.deposits) delete m.deposits[id]; S.goals = S.goals.filter(g => g.id !== id); save(); break; }
+    case 'goal-modal-open': openGoalDialog(); return;
+    case 'goal-modal-close': closeGoalDialog(); return;
     case 'goal-edit': editing.has(t.dataset.id) ? editing.delete(t.dataset.id) : editing.add(t.dataset.id); break;
     case 'dep-open': addingDep.add(t.dataset.id); focusAfterRender = `form.depform[data-id="${t.dataset.id}"] input`; break;
     case 'dep-cancel': addingDep.delete(t.dataset.id); break;
@@ -695,7 +698,7 @@ document.addEventListener('submit', e => {
       const acct = f.querySelector('select').value, today = new Date(), inMonth = keyOf(today) === cur;
       mo.deposits = mo.deposits || {}; (mo.deposits[g.id] = mo.deposits[g.id] || []).push({ id: uid(), amt, account: acct, date: inMonth ? `${keyOf(today)}-${pad(today.getDate())}` : '' });
       g.account = acct; syncTemplate(g); addingDep.delete(g.id); break; }
-    case 'goal-add': { const g = { id: uid(), name: v1.trim(), pct: Math.max(0, parseFloat(v2) || 0), account: '', hue: nextHue() }; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); break; }
+    case 'goal-add': { const g = { id: uid(), name: v1.trim(), pct: Math.max(0, parseFloat(v2) || 0), account: '', hue: nextHue() }; S.goals.push(g); ensureMonth(cur).plan.push({ ...g }); closeGoalDialog(); break; }
     case 'acc-add': { const n = v1.trim(); if (n && !S.accounts.includes(n)) S.accounts.push(n); break; }
     case 'cat-add': S.categories.push({ name: v1.trim() }); break;
     case 'src-add': S.sources.push(v1.trim()); break;
