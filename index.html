@@ -4,9 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Saving Planner</title>
-  <meta name="theme-color" content="#f6f5f4" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
-  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" id="themecolor" content="#f6f5f4">
+  <script>
+    /* apply the saved theme before first paint (Light unless changed in Settings) */
+    (function () {
+      var t = 'light';
+      try { var s = JSON.parse(localStorage.getItem('savingplanner.v1')); if (s && s.settings && s.settings.theme) t = s.settings.theme; } catch (e) {}
+      var dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+      var r = document.documentElement; r.dataset.theme = t; r.style.colorScheme = t === 'auto' ? 'light dark' : t;
+      document.getElementById('themecolor').content = dark ? '#111113' : '#f6f5f4';
+    })();
+  </script>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-180.png">

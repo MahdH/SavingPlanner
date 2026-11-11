@@ -7,7 +7,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 /* ---------- state ---------- */
 function defaultState() {
   return {
-    settings: { currency: '$', notify: true, midDay: 15 },
+    settings: { currency: '$', notify: true, midDay: 15, theme: 'light' }, // theme: light | dark | auto (this device only)
     sources: ['Maedeh', 'Mahdi', 'Other'],
     categories: [
       { name: 'Rent', fixed: true, auto: 1600 },
@@ -33,6 +33,16 @@ const save = () => {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* ignore */ }
   if (typeof schedulePush === 'function') schedulePush();
 };
+
+/* ---------- theme ---------- */
+function applyTheme() {
+  const t = ['light', 'dark', 'auto'].includes(S.settings && S.settings.theme) ? S.settings.theme : 'light';
+  const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  const root = document.documentElement;
+  root.dataset.theme = t; root.style.colorScheme = t === 'auto' ? 'light dark' : t;
+  const m = document.getElementById('themecolor'); if (m) m.content = dark ? '#111113' : '#f6f5f4';
+}
+try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); } catch (e) { /* old browsers */ }
 
 /* ---------- helpers ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -252,7 +262,7 @@ async function signOut() {
   if (cloud.on) await pushNow();
   try { await sb.auth.signOut(); } catch (e) { /* ignore */ }
   stopCloud(); lsSet(CLOUD_KEY, null);
-  S = defaultState(); saveLocal(); // do not leave household data on a device after sign-out
+  const th = S.settings.theme; S = defaultState(); S.settings.theme = th; saveLocal(); // do not leave household data on a device after sign-out; the theme stays
   cloud.hid = null; authMode = 'signin'; msg = ''; screen = 'auth'; render();
 }
 
@@ -404,6 +414,8 @@ function viewSettings() {
     ${iconBtn('acc-del', 'x', 'Remove account', `data-i="${i}"`)}</div>`).join('');
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   return `<header class="monthnav plain"><h1>Settings</h1></header>
+  <h2>Appearance</h2><div class="group pad"><div class="seg" role="group" aria-label="Theme">
+    ${[['light', 'Light'], ['dark', 'Dark'], ['auto', 'System']].map(([v, l]) => `<button data-act="theme" data-v="${v}" aria-pressed="${(S.settings.theme || 'light') === v}">${l}</button>`).join('')}</div></div>
   ${accountSection()}
   <h2>Reminders</h2><div class="group">
     <label class="line"><span>Remind me mid-month and at month end</span><input type="checkbox" class="switch" data-act="notify" ${S.settings.notify ? 'checked' : ''}></label>
@@ -528,6 +540,7 @@ document.addEventListener('click', e => {
     case 'toggle': open.has(t.dataset.key) ? open.delete(t.dataset.key) : open.add(t.dataset.key); break;
     case 'del': { const d = m[t.dataset.kind === 'i' ? 'income' : 'expenses']; d[t.dataset.name] = d[t.dataset.name].filter(x => x.id !== t.dataset.id); save(); break; }
     case 'goal-del': { m.plan = m.plan.filter(g => g.id !== t.dataset.id); S.goals = S.goals.filter(g => g.id !== t.dataset.id); save(); break; }
+    case 'theme': S.settings.theme = t.dataset.v; applyTheme(); save(); break;
     case 'acc-del': S.accounts.splice(+t.dataset.i, 1); save(); break;
     case 'cat-del': S.categories.splice(+t.dataset.i, 1); save(); break;
     case 'src-del': S.sources.splice(+t.dataset.i, 1); save(); break;
@@ -628,7 +641,7 @@ document.addEventListener('change', e => {
     case 'midday': S.settings.midDay = Math.min(28, Math.max(1, parseInt(t.value) || 15)); break;
     case 'restore': {
       const file = t.files[0]; if (!file) return;
-      file.text().then(txt => { try { const d = JSON.parse(txt); if (!d.months) throw 0; S = Object.assign(defaultState(), d); save(); render(); alert('Backup restored.'); } catch (_) { alert('That file is not a valid backup.'); } });
+      file.text().then(txt => { try { const d = JSON.parse(txt); if (!d.months) throw 0; S = Object.assign(defaultState(), d); S.settings = Object.assign(defaultState().settings, d.settings); save(); applyTheme(); render(); alert('Backup restored.'); } catch (_) { alert('That file is not a valid backup.'); } });
       return;
     }
     default: return;
@@ -644,6 +657,7 @@ document.addEventListener('visibilitychange', async () => {
   softRender(); maybeNotify();
 });
 window.addEventListener('online', () => { if (cloud.on) { pushNow(); pull().then(() => { subscribe(); softRender(); }).catch(() => {}); } });
+applyTheme();
 screen = 'loading';
 render();
 initCloud().then(maybeNotify);
